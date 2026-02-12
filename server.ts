@@ -4,6 +4,7 @@ let sessionId: string | undefined;
 const history: Array<{ role: "user" | "assistant"; text: string }> = [];
 
 const server = Bun.serve({
+	hostname: "0.0.0.0",
 	port: 3000,
 	async fetch(req, server) {
 		const url = new URL(req.url);
@@ -21,6 +22,7 @@ const server = Bun.serve({
 	},
 	websocket: {
 		open(ws) {
+			console.log(`[ws] Connection opened from ${ws.remoteAddress}`);
 			if (history.length > 0) {
 				ws.send(JSON.stringify({ type: "history", messages: history }));
 			}
@@ -31,7 +33,9 @@ const server = Bun.serve({
 				const parsed = JSON.parse(String(raw));
 				prompt = parsed.prompt;
 			} catch {
-				ws.send(JSON.stringify({ type: "error", text: "Invalid message" }));
+				ws.send(
+					JSON.stringify({ type: "error", text: "Invalid message" }),
+				);
 				return;
 			}
 
@@ -47,7 +51,10 @@ const server = Bun.serve({
 						...(sessionId && { resume: true, sessionId }),
 					},
 				})) {
-					if (message.type === "system" && message.subtype === "init") {
+					if (
+						message.type === "system" &&
+						message.subtype === "init"
+					) {
 						sessionId = message.sessionId;
 					}
 
@@ -68,7 +75,10 @@ const server = Bun.serve({
 					}
 
 					if (message.type === "result") {
-						history.push({ role: "assistant", text: assistantText });
+						history.push({
+							role: "assistant",
+							text: assistantText,
+						});
 						ws.send(JSON.stringify({ type: "done" }));
 					}
 				}
@@ -84,4 +94,4 @@ const server = Bun.serve({
 	},
 });
 
-console.log(`Server running at http://localhost:${server.port}`);
+console.log(`Server running at http://${server.hostname}:${server.port}`);
