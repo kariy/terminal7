@@ -12,6 +12,7 @@ final class ChatViewModel {
 
     private var webSocketTask: URLSessionWebSocketTask?
     private var isConnected = false
+    private var refreshTimer: Timer?
 
     func connect() {
         guard !isConnected else { return }
@@ -20,12 +21,28 @@ final class ChatViewModel {
         webSocketTask?.resume()
         isConnected = true
         receiveMessage()
+        startRefreshTimer()
     }
 
     func disconnect() {
         isConnected = false
+        refreshTimer?.invalidate()
+        refreshTimer = nil
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
+    }
+
+    private func startRefreshTimer() {
+        refreshTimer?.invalidate()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            self?.requestRefresh()
+        }
+    }
+
+    private func requestRefresh() {
+        guard isConnected, !isStreaming else { return }
+        let message = #"{"type":"refresh"}"#
+        webSocketTask?.send(.string(message)) { _ in }
     }
 
     func send() {

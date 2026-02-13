@@ -71,13 +71,26 @@ const server = Bun.serve({
 			}
 		},
 		async message(ws, raw) {
-			let prompt: string;
+			let parsed: any;
 			try {
-				const parsed = JSON.parse(String(raw));
-				prompt = parsed.prompt;
+				parsed = JSON.parse(String(raw));
 			} catch {
 				ws.send(
 					JSON.stringify({ type: "error", text: "Invalid message" }),
+				);
+				return;
+			}
+
+			if (parsed.type === "refresh") {
+				const history = readSessionHistory();
+				ws.send(JSON.stringify({ type: "history", messages: history }));
+				return;
+			}
+
+			const prompt: string = parsed.prompt;
+			if (!prompt) {
+				ws.send(
+					JSON.stringify({ type: "error", text: "Missing prompt" }),
 				);
 				return;
 			}
