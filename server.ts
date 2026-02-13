@@ -1,7 +1,49 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { readFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 
 let sessionId: string | undefined;
-const history: Array<{ role: "user" | "assistant"; text: string }> = [];
+
+function readSessionHistory(): Array<{ role: "user" | "assistant"; text: string }> {
+	if (!sessionId) return [];
+	try {
+		const cwd = process.cwd();
+		const encodedCwd = cwd.replace(/\//g, "-");
+		const sessionPath = join(
+			homedir(),
+			".claude",
+			"projects",
+			encodedCwd,
+			`${sessionId}.jsonl`,
+		);
+		const lines = readFileSync(sessionPath, "utf-8").split("\n").filter(Boolean);
+		const messages: Array<{ role: "user" | "assistant"; text: string }> = [];
+		for (const line of lines) {
+			const entry = JSON.parse(line);
+			if (entry.type === "user" && entry.message) {
+				const content = entry.message.content;
+				const text =
+					typeof content === "string"
+						? content
+						: content
+								.filter((b: any) => b.type === "text")
+								.map((b: any) => b.text)
+								.join("");
+				messages.push({ role: "user", text });
+			} else if (entry.type === "assistant" && entry.message) {
+				const text = entry.message.content
+					.filter((b: any) => b.type === "text")
+					.map((b: any) => b.text)
+					.join("");
+				messages.push({ role: "assistant", text });
+			}
+		}
+		return messages;
+	} catch {
+		return [];
+	}
+}
 
 const server = Bun.serve({
 	hostname: "0.0.0.0",
@@ -23,6 +65,7 @@ const server = Bun.serve({
 	websocket: {
 		open(ws) {
 			console.log(`[ws] Connection opened from ${ws.remoteAddress}`);
+			const history = readSessionHistory();
 			if (history.length > 0) {
 				ws.send(JSON.stringify({ type: "history", messages: history }));
 			}
@@ -39,7 +82,6 @@ const server = Bun.serve({
 				return;
 			}
 
-			history.push({ role: "user", text: prompt });
 			let assistantText = "";
 
 			try {
@@ -76,10 +118,6 @@ const server = Bun.serve({
 					}
 
 					if (message.type === "result") {
-						history.push({
-							role: "assistant",
-							text: assistantText,
-						});
 						ws.send(JSON.stringify({ type: "done" }));
 					}
 				}
