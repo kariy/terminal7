@@ -48,14 +48,15 @@ const server = Bun.serve({
 					options: {
 						allowedTools: ["Read", "Glob", "Grep", "Bash"],
 						includePartialMessages: true,
-						...(sessionId && { resume: true, sessionId }),
+						...(sessionId && { resume: sessionId }),
 					},
 				})) {
 					if (
 						message.type === "system" &&
 						message.subtype === "init"
 					) {
-						sessionId = message.sessionId;
+						sessionId = message.session_id;
+						console.log(`[session] ${sessionId}`);
 					}
 
 					if (message.type === "stream_event") {
@@ -83,6 +84,7 @@ const server = Bun.serve({
 					}
 				}
 			} catch (err) {
+				console.error("[error]", err);
 				ws.send(
 					JSON.stringify({
 						type: "error",

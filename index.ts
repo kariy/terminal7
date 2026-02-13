@@ -18,11 +18,11 @@ async function chat(prompt: string) {
 		options: {
 			allowedTools: ["Read", "Glob", "Grep", "Bash"],
 			includePartialMessages: true,
-			...(sessionId && { resume: true, sessionId }),
+			...(sessionId && { resume: sessionId }),
 		},
 	})) {
 		if (message.type === "system" && message.subtype === "init") {
-			sessionId = message.sessionId;
+			sessionId = message.session_id;
 		}
 
 		if (message.type === "stream_event") {
