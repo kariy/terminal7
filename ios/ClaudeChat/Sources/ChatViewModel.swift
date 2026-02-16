@@ -19,7 +19,8 @@ struct ClaudeSessionSummary: Identifiable, Equatable {
 final class ChatViewModel {
     var messages: [Message] = []
     var currentInput: String = ""
-    var isStreaming: Bool = false
+    var isStreaming: Bool { !activeRequestIds.isEmpty }
+    private var activeRequestIds: Set<String> = []
     var isConnected: Bool = false
     var isConnecting: Bool = false
     var connectionStatus: String = "Disconnected"
@@ -33,6 +34,7 @@ final class ChatViewModel {
     private var webSocketSession: URLSession?
     private var webSocketTask: URLSessionWebSocketTask?
     private var refreshTimer: Timer?
+    private var historyLoadTask: Task<Void, Never>?
 
     private var accessToken: String?
     private var deviceId: String?
@@ -97,9 +99,11 @@ final class ChatViewModel {
     }
 
     func disconnect() {
+        historyLoadTask?.cancel()
+        historyLoadTask = nil
         isConnected = false
         isConnecting = false
-        isStreaming = false
+        activeRequestIds.removeAll()
         isSessionViewActive = false
         sessions.removeAll()
         isLoadingSessions = false
@@ -114,24 +118,28 @@ final class ChatViewModel {
 
     func startNewClaudeCodeSession() {
         guard isConnected else { return }
+        historyLoadTask?.cancel()
+        historyLoadTask = nil
         activeSessionId = nil
         activeEncodedCwd = nil
         messages.removeAll()
         currentInput = ""
-        isStreaming = false
+        activeRequestIds.removeAll()
         isSessionViewActive = true
     }
 
     func openExistingSession(_ session: ClaudeSessionSummary) {
         guard isConnected else { return }
+        historyLoadTask?.cancel()
+        historyLoadTask = nil
         activeSessionId = session.sessionId
         activeEncodedCwd = session.encodedCwd
         messages.removeAll()
         currentInput = ""
-        isStreaming = false
+        activeRequestIds.removeAll()
         isSessionViewActive = true
 
-        Task { [weak self] in
+        historyLoadTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let history = try await self.fetchSessionHistory(
@@ -139,10 +147,25 @@ final class ChatViewModel {
                     encodedCwd: session.encodedCwd
                 )
                 await MainActor.run {
+                    guard
+                        self.activeSessionId == session.sessionId,
+                        self.activeEncodedCwd == session.encodedCwd,
+                        !self.isStreaming,
+                        self.messages.isEmpty
+                    else {
+                        return
+                    }
                     self.messages = history
                 }
             } catch {
                 await MainActor.run {
+                    guard
+                        self.activeSessionId == session.sessionId,
+                        self.activeEncodedCwd == session.encodedCwd,
+                        self.messages.isEmpty
+                    else {
+                        return
+                    }
                     self.messages = [
                         Message(
                             role: "assistant",
@@ -156,9 +179,11 @@ final class ChatViewModel {
 
     func returnToSessionHome() {
         guard isConnected else { return }
+        historyLoadTask?.cancel()
+        historyLoadTask = nil
         isSessionViewActive = false
         currentInput = ""
-        isStreaming = false
+        activeRequestIds.removeAll()
         refreshSessions(forceRefresh: false)
     }
 
@@ -186,12 +211,14 @@ final class ChatViewModel {
 
     func send() {
         let text = currentInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isStreaming else { return }
+        guard !text.isEmpty else { return }
         guard isSessionViewActive else { return }
         guard webSocketTask != nil, isConnected else {
             messages.append(Message(role: "assistant", text: "Not connected to manager."))
             return
         }
+        historyLoadTask?.cancel()
+        historyLoadTask = nil
 
         let requestId = UUID().uuidString
         var payload: [String: String] = [
@@ -208,8 +235,9 @@ final class ChatViewModel {
         }
 
         messages.append(Message(role: "user", text: text))
+        messages.append(Message(role: "assistant", text: "", requestId: requestId))
         currentInput = ""
-        isStreaming = true
+        activeRequestIds.insert(requestId)
 
         sendWebSocket(payload)
     }
@@ -429,7 +457,7 @@ final class ChatViewModel {
             if let error {
                 DispatchQueue.main.async {
                     self.messages.append(Message(role: "assistant", text: "Send error: \(error.localizedDescription)"))
-                    self.isStreaming = false
+                    self.activeRequestIds.removeAll()
                 }
             }
         }
@@ -460,7 +488,7 @@ final class ChatViewModel {
             case .failure(let error):
                 DispatchQueue.main.async {
                     self.isConnected = false
-                    self.isStreaming = false
+                    self.activeRequestIds.removeAll()
                     self.connectionStatus = "Disconnected"
                     self.messages.append(Message(role: "assistant", text: "Socket error: \(error.localizedDescription)"))
                 }
@@ -502,6 +530,8 @@ final class ChatViewModel {
             refreshSessions(forceRefresh: true)
 
         case "session.created":
+            historyLoadTask?.cancel()
+            historyLoadTask = nil
             activeSessionId = json["session_id"] as? String
             activeEncodedCwd = json["encoded_cwd"] as? String
 
@@ -522,15 +552,23 @@ final class ChatViewModel {
 
         case "stream.delta":
             if let deltaText = json["text"] as? String {
-                if let last = messages.last, last.role == "assistant", isStreaming {
+                let reqId = json["request_id"] as? String
+                if let reqId,
+                   let idx = messages.lastIndex(where: { $0.requestId == reqId }) {
+                    messages[idx].text += deltaText
+                } else if let last = messages.last, last.role == "assistant", isStreaming {
                     messages[messages.count - 1].text += deltaText
                 } else {
-                    messages.append(Message(role: "assistant", text: deltaText))
+                    messages.append(Message(role: "assistant", text: deltaText, requestId: reqId))
                 }
             }
 
         case "stream.done":
-            isStreaming = false
+            if let reqId = json["request_id"] as? String {
+                activeRequestIds.remove(reqId)
+            } else {
+                activeRequestIds.removeAll()
+            }
 
         case "error":
             let message = json["message"] as? String ?? "Unknown server error"
@@ -539,7 +577,11 @@ final class ChatViewModel {
                 accessToken = nil
                 KeychainHelper.delete(account: "cc-manager-token:\(accountKey())")
             }
-            isStreaming = false
+            if let reqId = json["request_id"] as? String {
+                activeRequestIds.remove(reqId)
+            } else {
+                activeRequestIds.removeAll()
+            }
 
         default:
             break

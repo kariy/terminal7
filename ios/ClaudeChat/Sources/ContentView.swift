@@ -229,7 +229,6 @@ struct ContentView: View {
     private var canSend: Bool {
         viewModel.isConnected &&
             viewModel.isSessionViewActive &&
-            !viewModel.isStreaming &&
             !viewModel.currentInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
