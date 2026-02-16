@@ -22,7 +22,7 @@ export class ClaudeService {
 			options: {
 				allowedTools: ["Read", "Glob", "Grep", "Bash"],
 				includePartialMessages: true,
-				// ...(args.cwd && { cwd: args.cwd }),
+				...(args.cwd && { cwd: args.cwd }),
 				...(args.resumeSessionId && { resume: args.resumeSessionId }),
 			},
 		});

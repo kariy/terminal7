@@ -122,27 +122,32 @@ async function handlePromptMessage(
 		allowedTools: config.allowedTools,
 		onSessionId: (sessionId) => {
 			resolvedSessionId = sessionId;
+
+			const sessionTitle = truncate(
+				params.titleHint ?? params.prompt.replace(/\s+/g, " "),
+				120,
+			);
+
 			const metadata = repository.upsertSessionMetadata({
 				sessionId,
-				encodedCwd: params.encodedCwd,
-				cwd: params.cwd,
-				title: truncate(
-					params.titleHint ?? params.prompt.replace(/\s+/g, " "),
-					120,
-				),
 				source: "db",
+				cwd: params.cwd,
+				title: sessionTitle,
+				encodedCwd: params.encodedCwd,
 			});
+
+			const eventType = params.resumeSessionId
+				? "session_resumed"
+				: "session_created";
 
 			repository.recordEvent({
 				sessionId,
+				eventType,
 				encodedCwd: params.encodedCwd,
-				eventType: params.resumeSessionId
-					? "session_resumed"
-					: "session_created",
 				payload: {
-					device_id: device.deviceId,
 					cwd: params.cwd,
 					title: metadata.title,
+					device_id: device.deviceId,
 				},
 			});
 
