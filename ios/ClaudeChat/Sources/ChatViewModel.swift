@@ -2,6 +2,19 @@ import Foundation
 import Observation
 import UIKit
 
+struct ClaudeSessionSummary: Identifiable, Equatable {
+    let sessionId: String
+    let encodedCwd: String
+    let cwd: String
+    let title: String
+    let lastActivityAt: Int
+    let messageCount: Int
+
+    var id: String {
+        "\(sessionId)|\(encodedCwd)"
+    }
+}
+
 @Observable
 final class ChatViewModel {
     var messages: [Message] = []
@@ -11,6 +24,8 @@ final class ChatViewModel {
     var isConnecting: Bool = false
     var connectionStatus: String = "Disconnected"
     var isSessionViewActive: Bool = false
+    var sessions: [ClaudeSessionSummary] = []
+    var isLoadingSessions: Bool = false
 
     var serverHost: String = ""
     private let managerPort: Int = 8787
@@ -51,6 +66,8 @@ final class ChatViewModel {
         isSessionViewActive = false
         activeSessionId = nil
         activeEncodedCwd = nil
+        sessions.removeAll()
+        isLoadingSessions = false
         messages.removeAll()
         currentInput = ""
 
@@ -84,6 +101,8 @@ final class ChatViewModel {
         isConnecting = false
         isStreaming = false
         isSessionViewActive = false
+        sessions.removeAll()
+        isLoadingSessions = false
         connectionStatus = "Disconnected"
         refreshTimer?.invalidate()
         refreshTimer = nil
@@ -101,6 +120,68 @@ final class ChatViewModel {
         currentInput = ""
         isStreaming = false
         isSessionViewActive = true
+    }
+
+    func openExistingSession(_ session: ClaudeSessionSummary) {
+        guard isConnected else { return }
+        activeSessionId = session.sessionId
+        activeEncodedCwd = session.encodedCwd
+        messages.removeAll()
+        currentInput = ""
+        isStreaming = false
+        isSessionViewActive = true
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let history = try await self.fetchSessionHistory(
+                    sessionId: session.sessionId,
+                    encodedCwd: session.encodedCwd
+                )
+                await MainActor.run {
+                    self.messages = history
+                }
+            } catch {
+                await MainActor.run {
+                    self.messages = [
+                        Message(
+                            role: "assistant",
+                            text: "Failed to load history: \(error.localizedDescription)"
+                        ),
+                    ]
+                }
+            }
+        }
+    }
+
+    func returnToSessionHome() {
+        guard isConnected else { return }
+        isSessionViewActive = false
+        currentInput = ""
+        isStreaming = false
+        refreshSessions(forceRefresh: false)
+    }
+
+    func refreshSessions(forceRefresh: Bool = true) {
+        guard isConnected else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            await MainActor.run {
+                self.isLoadingSessions = true
+            }
+
+            do {
+                let fetched = try await self.fetchSessions(forceRefresh: forceRefresh)
+                await MainActor.run {
+                    self.sessions = fetched
+                    self.isLoadingSessions = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoadingSessions = false
+                }
+            }
+        }
     }
 
     func send() {
@@ -181,6 +262,132 @@ final class ChatViewModel {
         accessToken = token
         defaults.set(newDeviceId, forKey: DefaultsKey.deviceId)
         try KeychainHelper.saveString(token, account: "cc-manager-token:\(accountKey())")
+    }
+
+    private func fetchSessions(forceRefresh: Bool) async throws -> [ClaudeSessionSummary] {
+        guard let accessToken else {
+            throw NSError(
+                domain: "manager",
+                code: -10,
+                userInfo: [NSLocalizedDescriptionKey: "Missing access token"]
+            )
+        }
+
+        var queryItems: [URLQueryItem] = []
+        if forceRefresh {
+            queryItems.append(URLQueryItem(name: "refresh", value: "1"))
+        }
+
+        var request = URLRequest(url: try managerHTTPURL(path: "/v1/sessions", queryItems: queryItems))
+        request.httpMethod = "GET"
+        request.addValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw NSError(
+                domain: "manager",
+                code: -11,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid session list response"]
+            )
+        }
+
+        guard (200...299).contains(http.statusCode) else {
+            let serverError = String(data: data, encoding: .utf8) ?? "Unknown sessions error"
+            throw NSError(
+                domain: "manager",
+                code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: serverError]
+            )
+        }
+
+        guard
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let rawSessions = json["sessions"] as? [[String: Any]]
+        else {
+            throw NSError(
+                domain: "manager",
+                code: -12,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid sessions payload"]
+            )
+        }
+
+        return rawSessions.compactMap { item in
+            guard
+                let sessionId = item["session_id"] as? String,
+                let encodedCwd = item["encoded_cwd"] as? String
+            else {
+                return nil
+            }
+
+            return ClaudeSessionSummary(
+                sessionId: sessionId,
+                encodedCwd: encodedCwd,
+                cwd: item["cwd"] as? String ?? "",
+                title: item["title"] as? String ?? "Untitled session",
+                lastActivityAt: item["last_activity_at"] as? Int ?? item["updated_at"] as? Int ?? 0,
+                messageCount: item["message_count"] as? Int ?? 0
+            )
+        }
+    }
+
+    private func fetchSessionHistory(sessionId: String, encodedCwd: String) async throws -> [Message] {
+        guard let accessToken else {
+            throw NSError(
+                domain: "manager",
+                code: -13,
+                userInfo: [NSLocalizedDescriptionKey: "Missing access token"]
+            )
+        }
+
+        let escapedSessionId = sessionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sessionId
+        let queryItems = [URLQueryItem(name: "encoded_cwd", value: encodedCwd)]
+        var request = URLRequest(
+            url: try managerHTTPURL(
+                path: "/v1/sessions/\(escapedSessionId)/history",
+                queryItems: queryItems
+            )
+        )
+        request.httpMethod = "GET"
+        request.addValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw NSError(
+                domain: "manager",
+                code: -14,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid history response"]
+            )
+        }
+
+        guard (200...299).contains(http.statusCode) else {
+            let serverError = String(data: data, encoding: .utf8) ?? "Unknown history error"
+            throw NSError(
+                domain: "manager",
+                code: http.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: serverError]
+            )
+        }
+
+        guard
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let rawMessages = json["messages"] as? [[String: Any]]
+        else {
+            throw NSError(
+                domain: "manager",
+                code: -15,
+                userInfo: [NSLocalizedDescriptionKey: "Invalid history payload"]
+            )
+        }
+
+        return rawMessages.compactMap { item in
+            guard
+                let role = item["role"] as? String,
+                let text = item["text"] as? String
+            else {
+                return nil
+            }
+            return Message(role: role, text: text)
+        }
     }
 
     private func openWebSocket() {
@@ -292,6 +499,7 @@ final class ChatViewModel {
             activeSessionId = nil
             activeEncodedCwd = nil
             messages.removeAll()
+            refreshSessions(forceRefresh: true)
 
         case "session.created":
             activeSessionId = json["session_id"] as? String
@@ -303,6 +511,13 @@ final class ChatViewModel {
             }
             if let encodedCwd = json["encoded_cwd"] as? String {
                 activeEncodedCwd = encodedCwd
+            }
+            if
+                let status = json["status"] as? String,
+                status == "index_refreshed",
+                !isSessionViewActive
+            {
+                refreshSessions(forceRefresh: false)
             }
 
         case "stream.delta":
@@ -348,7 +563,7 @@ final class ChatViewModel {
         "\(serverHost):\(managerPort)"
     }
 
-    private func managerHTTPURL(path: String) throws -> URL {
+    private func managerHTTPURL(path: String, queryItems: [URLQueryItem] = []) throws -> URL {
         var components = URLComponents()
 
         components.scheme = "http"
@@ -359,6 +574,9 @@ final class ChatViewModel {
             components.path = path
         } else {
             components.path = "/\(path)"
+        }
+        if !queryItems.isEmpty {
+            components.queryItems = queryItems
         }
 
         guard let url = components.url else {
