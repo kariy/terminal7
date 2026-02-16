@@ -73,7 +73,10 @@ for await (const message of query({
 		sessionId = message.session_id;
 	}
 	if (message.type === "result") {
-		resultText = message.result as string;
+		resultText =
+			message.subtype === "success"
+				? message.result
+				: message.errors.join("\n");
 	}
 }
 
@@ -137,7 +140,10 @@ for await (const message of query({
 	},
 })) {
 	if (message.type === "result") {
-		finalText = message.result as string;
+		finalText =
+			message.subtype === "success"
+				? message.result
+				: message.errors.join("\n");
 	}
 }
 

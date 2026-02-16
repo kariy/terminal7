@@ -5,7 +5,10 @@ import { homedir } from "os";
 
 let sessionId: string | undefined;
 
-function readSessionHistory(): Array<{ role: "user" | "assistant"; text: string }> {
+function readSessionHistory(): Array<{
+	role: "user" | "assistant";
+	text: string;
+}> {
 	if (!sessionId) return [];
 	try {
 		const cwd = process.cwd();
@@ -17,8 +20,11 @@ function readSessionHistory(): Array<{ role: "user" | "assistant"; text: string 
 			encodedCwd,
 			`${sessionId}.jsonl`,
 		);
-		const lines = readFileSync(sessionPath, "utf-8").split("\n").filter(Boolean);
-		const messages: Array<{ role: "user" | "assistant"; text: string }> = [];
+		const lines = readFileSync(sessionPath, "utf-8")
+			.split("\n")
+			.filter(Boolean);
+		const messages: Array<{ role: "user" | "assistant"; text: string }> =
+			[];
 		for (const line of lines) {
 			const entry = JSON.parse(line);
 			if (entry.type === "user" && entry.message) {
@@ -95,8 +101,6 @@ const server = Bun.serve({
 				return;
 			}
 
-			let assistantText = "";
-
 			try {
 				for await (const message of query({
 					prompt,
@@ -120,7 +124,6 @@ const server = Bun.serve({
 							event.type === "content_block_delta" &&
 							event.delta.type === "text_delta"
 						) {
-							assistantText += event.delta.text;
 							ws.send(
 								JSON.stringify({
 									type: "delta",

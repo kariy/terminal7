@@ -9,7 +9,7 @@ struct ClaudeChatApp: App {
             ContentView(viewModel: viewModel)
                 .preferredColorScheme(.dark)
                 .onAppear {
-                    viewModel.connect()
+                    viewModel.autoConnectIfPossible()
                 }
         }
     }

@@ -3,6 +3,16 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "scripts": {
+    "dev:manager": "bun run services/cc-manager/src/main.ts",
+    "dev:manager:public": "bash scripts/start-server.sh",
+    "dev:cli": "bun run index.ts",
+    "dev:legacy-server": "bun run server.ts",
+    "test:manager": "bun test services/cc-manager/src",
+    "ios:build": "bash scripts/ios-build.sh",
+    "ios:install": "bash scripts/ios-install.sh",
+    "ios:build-install": "bash scripts/ios-build-install.sh"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
