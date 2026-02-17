@@ -5,6 +5,12 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 
 export type TerminalStatus = "idle" | "connecting" | "connected" | "closed";
 
+interface PendingConnection {
+  sessionId: string;
+  encodedCwd: string;
+  sshDestination: string;
+}
+
 export function useTerminal() {
   const [status, setStatus] = useState<TerminalStatus>("idle");
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -12,6 +18,7 @@ export function useTerminal() {
   const fitRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const pendingRef = useRef<PendingConnection | null>(null);
 
   const cleanup = useCallback(() => {
     resizeObserverRef.current?.disconnect();
@@ -26,12 +33,13 @@ export function useTerminal() {
     termRef.current?.dispose();
     termRef.current = null;
     fitRef.current = null;
+    pendingRef.current = null;
   }, []);
 
-  const open = useCallback(
-    (sessionId: string, encodedCwd: string, sshDestination: string) => {
-      cleanup();
-      setStatus("connecting");
+  const connect = useCallback(
+    (container: HTMLDivElement, pending: PendingConnection) => {
+      const { sessionId, encodedCwd, sshDestination } = pending;
+      pendingRef.current = null;
 
       const term = new Terminal({
         cursorBlink: true,
@@ -52,10 +60,8 @@ export function useTerminal() {
       termRef.current = term;
       fitRef.current = fitAddon;
 
-      if (containerRef.current) {
-        term.open(containerRef.current);
-        fitAddon.fit();
-      }
+      term.open(container);
+      fitAddon.fit();
 
       const cols = term.cols;
       const rows = term.rows;
@@ -94,14 +100,12 @@ export function useTerminal() {
         // onclose fires after this
       };
 
-      // Forward keystrokes to the server
       term.onData((data) => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(data);
         }
       });
 
-      // Handle binary data from terminal
       term.onBinary((data) => {
         if (ws.readyState === WebSocket.OPEN) {
           const buf = new Uint8Array(data.length);
@@ -112,7 +116,6 @@ export function useTerminal() {
         }
       });
 
-      // Resize handling
       const sendResize = () => {
         if (!fitRef.current || !termRef.current) return;
         fitRef.current.fit();
@@ -123,23 +126,42 @@ export function useTerminal() {
         }
       };
 
+      const observer = new ResizeObserver(() => {
+        sendResize();
+      });
+      observer.observe(container);
+      resizeObserverRef.current = observer;
+    },
+    [],
+  );
+
+  const open = useCallback(
+    (sessionId: string, encodedCwd: string, sshDestination: string) => {
+      cleanup();
+      setStatus("connecting");
+      pendingRef.current = { sessionId, encodedCwd, sshDestination };
+
+      // If the container is already mounted, connect immediately.
+      // Otherwise, the effect below will pick it up after render.
       if (containerRef.current) {
-        const observer = new ResizeObserver(() => {
-          sendResize();
-        });
-        observer.observe(containerRef.current);
-        resizeObserverRef.current = observer;
+        connect(containerRef.current, { sessionId, encodedCwd, sshDestination });
       }
     },
-    [cleanup],
+    [cleanup, connect],
   );
+
+  // After render: if there's a pending connection and the container is now available, connect.
+  useEffect(() => {
+    if (pendingRef.current && containerRef.current && !termRef.current) {
+      connect(containerRef.current, pendingRef.current);
+    }
+  });
 
   const close = useCallback(() => {
     cleanup();
     setStatus("idle");
   }, [cleanup]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       cleanup();

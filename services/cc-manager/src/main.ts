@@ -211,27 +211,35 @@ export function createServer(deps: ServerDeps): ServerHandle {
 
 		const remoteCommand = `cd ${shellEscape(cwd)} && claude -r ${shellEscape(sessionId)}`;
 
-		const terminal = terminalService.open({
-			sshDestination,
-			remoteCommand,
-			cols,
-			rows,
-			onData(data) {
-				try {
-					ws.send(data);
-				} catch {
-					// WS already closed
-				}
-			},
-			onExit(code) {
-				log.terminal(`pty exited connection_id=${connectionId} code=${code}`);
-				try {
-					ws.close(1000, "Process exited");
-				} catch {
-					// WS already closed
-				}
-			},
-		});
+		let terminal: ReturnType<TerminalServiceLike["open"]>;
+		try {
+			terminal = terminalService.open({
+				sshDestination,
+				remoteCommand,
+				cols,
+				rows,
+				onData(data) {
+					try {
+						ws.send(data);
+					} catch {
+						// WS already closed
+					}
+				},
+				onExit(code) {
+					log.terminal(`pty exited connection_id=${connectionId} code=${code}`);
+					try {
+						ws.close(1000, "Process exited");
+					} catch {
+						// WS already closed
+					}
+				},
+			});
+		} catch (err) {
+			log.terminal(`failed to open pty connection_id=${connectionId} error=${err}`);
+			ws.send(`\r\n[Terminal error: ${err instanceof Error ? err.message : String(err)}]\r\n`);
+			ws.close(1011, "Terminal open failed");
+			return;
+		}
 
 		ws.data.terminal = terminal;
 	}
