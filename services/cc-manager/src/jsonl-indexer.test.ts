@@ -61,6 +61,7 @@ describe("ClaudeJsonlIndexer", () => {
 		expect(history1.messages.length).toBe(1);
 		expect(history1.nextCursor).toBe(1);
 		expect(history1.messages[0]?.role).toBe("user");
+		expect(history1.messages[0]?.content_blocks).toEqual([{ type: "text", text: "hello" }]);
 
 		const history2 = indexer.readHistory({
 			sessionId,
@@ -69,6 +70,7 @@ describe("ClaudeJsonlIndexer", () => {
 		});
 		expect(history2.messages.length).toBe(1);
 		expect(history2.messages[0]?.role).toBe("assistant");
+		expect(history2.messages[0]?.content_blocks).toEqual([{ type: "text", text: "hi there" }]);
 		repository.close();
 	});
 });

@@ -3,20 +3,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { TypingIndicator } from "@/components/chat/TypingIndicator";
 import { ChatInput } from "@/components/chat/ChatInput";
-
-export interface ContentBlockState {
-  type: "text" | "tool_use" | "thinking";
-  text: string;
-  toolName?: string;
-  toolId?: string;
-  toolInput?: string;
-}
-
-export interface ChatMessage {
-  role: "user" | "assistant";
-  requestId: string | null;
-  contentBlocks: ContentBlockState[];
-}
+import type { ChatMessage } from "@/types/chat";
 
 interface ChatViewProps {
   messages: ChatMessage[];
@@ -62,7 +49,12 @@ export function ChatView({
             if (msg.contentBlocks.length === 0 && !isActive) return null;
 
             return (
-              <MessageBubble key={i} role={msg.role} contentBlocks={msg.contentBlocks} />
+              <MessageBubble
+                key={i}
+                role={msg.role}
+                contentBlocks={msg.contentBlocks}
+                isStreaming={isActive}
+              />
             );
           })}
         </div>

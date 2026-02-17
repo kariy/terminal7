@@ -16,6 +16,7 @@ export interface SessionSummary extends SessionMetadata {
 export interface HistoryMessage {
 	role: "user" | "assistant";
 	text: string;
+	content_blocks?: unknown[];
 	uuid?: string;
 }
 

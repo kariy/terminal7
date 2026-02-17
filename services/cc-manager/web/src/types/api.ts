@@ -17,6 +17,7 @@ export interface SessionListResponse {
 export interface HistoryMessage {
   role: "user" | "assistant";
   text: string;
+  content_blocks?: unknown[];
   uuid?: string;
 }
 

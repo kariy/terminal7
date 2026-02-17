@@ -2,12 +2,13 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import { useWebSocket } from "@/hooks/use-websocket";
 import type { WsServerMessage } from "@/types/ws";
 import type { SDKMessage } from "@/types/sdk-messages";
-import type { SessionListItem } from "@/types/api";
+import type { SessionListItem, HistoryMessage } from "@/types/api";
 import { fetchSessions, fetchHistory } from "@/lib/api";
 import { Header } from "@/components/layout/Header";
 import { ConnectingView } from "@/components/views/ConnectingView";
 import { SessionsView } from "@/components/views/SessionsView";
-import { ChatView, type ChatMessage, type ContentBlockState } from "@/components/views/ChatView";
+import { ChatView } from "@/components/views/ChatView";
+import type { ChatMessage, ContentBlockState } from "@/types/chat";
 
 // ── State ──
 
@@ -133,7 +134,6 @@ function reducer(state: AppState, action: Action): AppState {
     case "SDK_MESSAGE": {
       const sdk = action.sdkMessage;
 
-      // Only handle stream_event and tool_use_summary for rendering
       if (sdk.type === "stream_event") {
         const { event } = sdk;
 
@@ -150,11 +150,14 @@ function reducer(state: AppState, action: Action): AppState {
             return state;
           }
 
-          const msgs = state.messages.map((m) =>
-            m.requestId === action.requestId
-              ? { ...m, contentBlocks: [...m.contentBlocks, newBlock] }
-              : m,
-          );
+          const msgs = state.messages.map((m) => {
+            if (m.requestId !== action.requestId) return m;
+            return {
+              ...m,
+              contentBlocks: [...m.contentBlocks, newBlock],
+              streamStartTime: m.streamStartTime ?? Date.now(),
+            };
+          });
           return { ...state, messages: msgs };
         }
 
@@ -178,16 +181,75 @@ function reducer(state: AppState, action: Action): AppState {
           return { ...state, messages: msgs };
         }
 
-        // content_block_stop, message_start/delta/stop: no-op
+        if (event.type === "content_block_stop") {
+          const msgs = state.messages.map((m) => {
+            if (m.requestId !== action.requestId) return m;
+            const blocks = [...m.contentBlocks];
+            const target = blocks[event.index];
+            if (!target) return m;
+            blocks[event.index] = { ...target, isComplete: true };
+            return { ...m, contentBlocks: blocks };
+          });
+          return { ...state, messages: msgs };
+        }
+
+        // message_start/delta/stop: no-op
         return state;
       }
 
+      if (sdk.type === "tool_progress") {
+        const msgs = state.messages.map((m) => {
+          if (m.requestId !== action.requestId) return m;
+          // Find the last tool_use block matching this tool name
+          const blocks = [...m.contentBlocks];
+          for (let i = blocks.length - 1; i >= 0; i--) {
+            if (blocks[i].type === "tool_use" && blocks[i].toolName === sdk.tool_name) {
+              blocks[i] = { ...blocks[i], elapsedSeconds: sdk.elapsed_time_seconds };
+              break;
+            }
+          }
+          return { ...m, contentBlocks: blocks };
+        });
+        return { ...state, messages: msgs };
+      }
+
       if (sdk.type === "tool_use_summary") {
-        const msgs = state.messages.map((m) =>
-          m.requestId === action.requestId
-            ? { ...m, contentBlocks: [...m.contentBlocks, { type: "text" as const, text: sdk.summary }] }
-            : m,
-        );
+        const msgs = state.messages.map((m) => {
+          if (m.requestId !== action.requestId) return m;
+          // Find the last tool_use block to link to
+          let lastToolId: string | undefined;
+          for (let i = m.contentBlocks.length - 1; i >= 0; i--) {
+            if (m.contentBlocks[i].type === "tool_use") {
+              lastToolId = m.contentBlocks[i].toolId;
+              break;
+            }
+          }
+          const resultBlock: ContentBlockState = {
+            type: "tool_result",
+            text: sdk.summary,
+            toolResultForId: lastToolId,
+            isError: false,
+          };
+          return { ...m, contentBlocks: [...m.contentBlocks, resultBlock] };
+        });
+        return { ...state, messages: msgs };
+      }
+
+      if (sdk.type === "result") {
+        const msgs = state.messages.map((m) => {
+          if (m.requestId !== action.requestId) return m;
+          const durationSeconds = m.streamStartTime
+            ? (Date.now() - m.streamStartTime) / 1000
+            : undefined;
+          const resultBlock: ContentBlockState = {
+            type: "result",
+            text: sdk.result ?? "",
+            isResultError: sdk.is_error,
+            totalCostUsd: sdk.total_cost_usd,
+            durationSeconds,
+          };
+          return { ...m, contentBlocks: [...m.contentBlocks, resultBlock] };
+        });
         return { ...state, messages: msgs };
       }
 
@@ -259,6 +321,100 @@ function pushUrl(path: string) {
   }
 }
 
+// ── History → ChatMessage mapping ──
+
+function mapContentBlock(raw: Record<string, unknown>): ContentBlockState | null {
+  const type = raw.type;
+  if (type === "text" && typeof raw.text === "string") {
+    return { type: "text", text: raw.text, isComplete: true };
+  }
+  if (type === "tool_use") {
+    return {
+      type: "tool_use",
+      text: "",
+      toolName: String(raw.name || ""),
+      toolId: String(raw.id || ""),
+      toolInput: typeof raw.input === "object" ? JSON.stringify(raw.input) : String(raw.input || ""),
+      isComplete: true,
+    };
+  }
+  if (type === "thinking" && typeof raw.thinking === "string") {
+    return { type: "thinking", text: raw.thinking, isComplete: true };
+  }
+  if (type === "tool_result") {
+    const resultText = extractToolResultText(raw.content);
+    return {
+      type: "tool_result",
+      text: resultText,
+      toolResultForId: typeof raw.tool_use_id === "string" ? raw.tool_use_id : undefined,
+      isError: raw.is_error === true,
+    };
+  }
+  return null;
+}
+
+function extractToolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((c) => {
+      if (typeof c === "string") return c;
+      if (typeof c === "object" && c !== null && (c as Record<string, unknown>).type === "text") {
+        return String((c as Record<string, unknown>).text || "");
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function mapHistoryToChat(messages: HistoryMessage[]): ChatMessage[] {
+  const result: ChatMessage[] = [];
+
+  for (const m of messages) {
+    const blocks: ContentBlockState[] = [];
+
+    if (m.content_blocks && Array.isArray(m.content_blocks)) {
+      for (const raw of m.content_blocks) {
+        if (typeof raw !== "object" || raw === null) continue;
+        const mapped = mapContentBlock(raw as Record<string, unknown>);
+        if (mapped) blocks.push(mapped);
+      }
+    }
+
+    // If no content blocks parsed, fall back to plain text
+    if (blocks.length === 0 && m.text) {
+      blocks.push({ type: "text", text: m.text, isComplete: true });
+    }
+
+    // User messages with only tool_result blocks → merge into preceding assistant message
+    const isToolResultOnly =
+      m.role === "user" && blocks.length > 0 && blocks.every((b) => b.type === "tool_result");
+
+    if (isToolResultOnly && result.length > 0) {
+      const prev = result[result.length - 1];
+      if (prev.role === "assistant") {
+        result[result.length - 1] = {
+          ...prev,
+          contentBlocks: [...prev.contentBlocks, ...blocks],
+        };
+        continue;
+      }
+    }
+
+    // Skip user messages that ended up with no displayable content
+    if (blocks.length === 0) continue;
+
+    result.push({
+      role: m.role,
+      requestId: null,
+      contentBlocks: blocks,
+    });
+  }
+
+  return result;
+}
+
 // ── App ──
 
 export default function App() {
@@ -298,11 +454,7 @@ export default function App() {
                       dispatch({
                         type: "SET_HISTORY",
                         sessionId: route.sessionId!,
-                        messages: hist.messages.map((m) => ({
-                          role: m.role,
-                          requestId: null,
-                          contentBlocks: [{ type: "text" as const, text: m.text }],
-                        })),
+                        messages: mapHistoryToChat(hist.messages),
                       });
                     },
                   );
@@ -434,11 +586,7 @@ export default function App() {
             dispatch({
               type: "SET_HISTORY",
               sessionId: route.sessionId!,
-              messages: hist.messages.map((m) => ({
-                role: m.role,
-                requestId: null,
-                contentBlocks: [{ type: "text" as const, text: m.text }],
-              })),
+              messages: mapHistoryToChat(hist.messages),
             });
           });
         }
@@ -475,11 +623,7 @@ export default function App() {
           dispatch({
             type: "SET_HISTORY",
             sessionId: s.session_id,
-            messages: hist.messages.map((m) => ({
-              role: m.role,
-              requestId: null,
-              contentBlocks: [{ type: "text" as const, text: m.text }],
-            })),
+            messages: mapHistoryToChat(hist.messages),
           });
         });
       }

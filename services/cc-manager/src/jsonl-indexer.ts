@@ -170,20 +170,34 @@ export class ClaudeJsonlIndexer {
 			}
 
 			if (parsed.type === "user" && parsed.message) {
-				const text = extractTextBlocks(parsed.message.content).trim();
+				const content = parsed.message.content;
+				const text = extractTextBlocks(content).trim();
 				if (cwd === null && typeof parsed.cwd === "string") {
 					cwd = parsed.cwd;
 				}
-				if (text.length === 0) continue;
-				messages.push({ role: "user", text, uuid: parsed.uuid });
-				if (!firstUserText) firstUserText = text;
+				const contentBlocks = Array.isArray(content) ? content : undefined;
+				if (text.length === 0 && !contentBlocks?.length) continue;
+				messages.push({
+					role: "user",
+					text,
+					content_blocks: contentBlocks,
+					uuid: parsed.uuid,
+				});
+				if (!firstUserText && text) firstUserText = text;
 				continue;
 			}
 
 			if (parsed.type === "assistant" && parsed.message) {
-				const text = extractTextBlocks(parsed.message.content).trim();
-				if (text.length === 0) continue;
-				messages.push({ role: "assistant", text, uuid: parsed.uuid });
+				const content = parsed.message.content;
+				const text = extractTextBlocks(content).trim();
+				const contentBlocks = Array.isArray(content) ? content : undefined;
+				if (text.length === 0 && !contentBlocks?.length) continue;
+				messages.push({
+					role: "assistant",
+					text,
+					content_blocks: contentBlocks,
+					uuid: parsed.uuid,
+				});
 			}
 		}
 

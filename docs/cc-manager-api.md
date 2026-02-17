@@ -82,15 +82,30 @@ Read message history for a session from its JSONL file. Returns cursor-paginated
   "encoded_cwd": "-Users-me-project",
   "messages": [
     {
-      "role": "user",      // "user" | "assistant"
-      "text": "Fix the login bug",
-      "uuid": "msg-uuid"   // optional
+      "role": "user",              // "user" | "assistant"
+      "text": "Fix the login bug", // plain text summary (all text blocks joined)
+      "content_blocks": [          // optional — raw Anthropic API content blocks
+        { "type": "text", "text": "Fix the login bug" }
+      ],
+      "uuid": "msg-uuid"          // optional
+    },
+    {
+      "role": "assistant",
+      "text": "I'll look into that...",
+      "content_blocks": [
+        { "type": "thinking", "thinking": "Let me analyze..." },
+        { "type": "text", "text": "I'll look into that..." },
+        { "type": "tool_use", "id": "tool_1", "name": "Read", "input": { "file_path": "/src/login.ts" } }
+      ],
+      "uuid": "msg-uuid"
     }
   ],
   "next_cursor": 50,       // null if no more pages
   "total_messages": 120
 }
 ```
+
+The `content_blocks` field contains the raw content block array from the JSONL session file when available. Clients should prefer `content_blocks` for rich rendering (tool calls, thinking, etc.) and fall back to `text` for plain display.
 
 **Response `404`** — Session not found
 
