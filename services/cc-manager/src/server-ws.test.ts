@@ -54,11 +54,25 @@ describe("ping/pong", () => {
 });
 
 describe("session.create flow", () => {
-	test("sends session.created, stream.delta(s), stream.done in order", async () => {
+	test("sends session.created, stream.message(s), stream.done in order", async () => {
 		ctx.claudeService.setBehavior(async (args) => {
 			args.onSessionId("sid-" + crypto.randomUUID().slice(0, 8));
-			args.onDelta("Hello ");
-			args.onDelta("world");
+			args.onMessage({
+				type: "stream_event",
+				event: {
+					type: "content_block_delta",
+					index: 0,
+					delta: { type: "text_delta", text: "Hello " },
+				},
+			} as any);
+			args.onMessage({
+				type: "stream_event",
+				event: {
+					type: "content_block_delta",
+					index: 0,
+					delta: { type: "text_delta", text: "world" },
+				},
+			} as any);
 			args.onDone();
 		});
 
@@ -81,8 +95,8 @@ describe("session.create flow", () => {
 		);
 		expect(types).toEqual([
 			"session.created",
-			"stream.delta",
-			"stream.delta",
+			"stream.message",
+			"stream.message",
 			"stream.done",
 		]);
 	});
@@ -145,7 +159,7 @@ describe("session.create flow", () => {
 });
 
 describe("session.resume/send flow", () => {
-	test("with existing session → receives session.state(session_resumed), deltas, done", async () => {
+	test("with existing session → receives session.state(session_resumed), messages, done", async () => {
 		// First create a session via the repository
 		const sessionId = "sess-resume-test";
 		const encodedCwd = "-tmp";
@@ -159,7 +173,14 @@ describe("session.resume/send flow", () => {
 
 		ctx.claudeService.setBehavior(async (args) => {
 			args.onSessionId(sessionId);
-			args.onDelta("Resumed!");
+			args.onMessage({
+				type: "stream_event",
+				event: {
+					type: "content_block_delta",
+					index: 0,
+					delta: { type: "text_delta", text: "Resumed!" },
+				},
+			} as any);
 			args.onDone();
 		});
 
@@ -183,7 +204,7 @@ describe("session.resume/send flow", () => {
 		);
 		expect(types).toEqual([
 			"session.state",
-			"stream.delta",
+			"stream.message",
 			"stream.done",
 		]);
 

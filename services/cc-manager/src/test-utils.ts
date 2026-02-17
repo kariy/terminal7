@@ -15,7 +15,14 @@ export class MockClaudeService implements ClaudeServiceLike {
 	stopCalls: string[] = [];
 	private behavior: StreamBehavior = async (args) => {
 		args.onSessionId("mock-session-id");
-		args.onDelta("mock response");
+		args.onMessage({
+			type: "stream_event",
+			event: {
+				type: "content_block_delta",
+				index: 0,
+				delta: { type: "text_delta", text: "mock response" },
+			},
+		} as any);
 		args.onDone();
 	};
 

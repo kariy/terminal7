@@ -4,10 +4,18 @@ import { MessageBubble } from "@/components/chat/MessageBubble";
 import { TypingIndicator } from "@/components/chat/TypingIndicator";
 import { ChatInput } from "@/components/chat/ChatInput";
 
+export interface ContentBlockState {
+  type: "text" | "tool_use" | "thinking";
+  text: string;
+  toolName?: string;
+  toolId?: string;
+  toolInput?: string;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
-  text: string;
   requestId: string | null;
+  contentBlocks: ContentBlockState[];
 }
 
 interface ChatViewProps {
@@ -45,16 +53,16 @@ export function ChatView({
             const isActive =
               msg.requestId !== null && activeRequestIds.has(msg.requestId);
             const showTyping =
-              msg.role === "assistant" && msg.text === "" && isActive;
+              msg.role === "assistant" && msg.contentBlocks.length === 0 && isActive;
 
             if (showTyping) {
               return <TypingIndicator key={i} />;
             }
 
-            if (msg.text === "" && !isActive) return null;
+            if (msg.contentBlocks.length === 0 && !isActive) return null;
 
             return (
-              <MessageBubble key={i} role={msg.role} text={msg.text} />
+              <MessageBubble key={i} role={msg.role} contentBlocks={msg.contentBlocks} />
             );
           })}
         </div>

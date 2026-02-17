@@ -1,5 +1,7 @@
 // Server → Client messages
 
+import type { SDKMessage } from "./sdk-messages";
+
 export interface WsHelloMessage {
   type: "hello";
   requires_auth: boolean;
@@ -23,11 +25,11 @@ export interface WsSessionStateMessage {
   stats?: unknown;
 }
 
-export interface WsStreamDeltaMessage {
-  type: "stream.delta";
+export interface WsStreamMessageMessage {
+  type: "stream.message";
   request_id: string;
   session_id?: string;
-  text: string;
+  sdk_message: SDKMessage;
 }
 
 export interface WsStreamDoneMessage {
@@ -54,7 +56,7 @@ export type WsServerMessage =
   | WsHelloMessage
   | WsSessionCreatedMessage
   | WsSessionStateMessage
-  | WsStreamDeltaMessage
+  | WsStreamMessageMessage
   | WsStreamDoneMessage
   | WsErrorMessage
   | WsPongMessage;

@@ -62,11 +62,11 @@ export interface WsSessionStateMessage {
 	stats?: unknown;
 }
 
-export interface WsStreamDeltaMessage {
-	type: "stream.delta";
+export interface WsStreamMessageMessage {
+	type: "stream.message";
 	request_id: string;
 	session_id?: string;
-	text: string;
+	sdk_message: unknown;
 }
 
 export interface WsStreamDoneMessage {
@@ -93,7 +93,7 @@ export type WsServerMessage =
 	| WsHelloMessage
 	| WsSessionCreatedMessage
 	| WsSessionStateMessage
-	| WsStreamDeltaMessage
+	| WsStreamMessageMessage
 	| WsStreamDoneMessage
 	| WsErrorMessage
 	| WsPongMessage;

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { useWebSocket } from "@/hooks/use-websocket";
 import type { WsServerMessage } from "@/types/ws";
+import type { SDKMessage } from "@/types/sdk-messages";
 import type { SessionListItem } from "@/types/api";
 import { fetchSessions, fetchHistory } from "@/lib/api";
 import { Header } from "@/components/layout/Header";
 import { ConnectingView } from "@/components/views/ConnectingView";
 import { SessionsView } from "@/components/views/SessionsView";
-import { ChatView, type ChatMessage } from "@/components/views/ChatView";
+import { ChatView, type ChatMessage, type ContentBlockState } from "@/components/views/ChatView";
 
 // ── State ──
 
@@ -52,7 +53,7 @@ type Action =
       encodedCwd: string;
     }
   | { type: "SESSION_STATE"; sessionId?: string; encodedCwd?: string }
-  | { type: "STREAM_DELTA"; requestId: string; text: string }
+  | { type: "SDK_MESSAGE"; requestId: string; sdkMessage: SDKMessage }
   | { type: "STREAM_DONE"; requestId: string }
   | { type: "ERROR"; requestId?: string; message: string };
 
@@ -108,8 +109,8 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         messages: [
           ...state.messages,
-          { role: "user", text: action.text, requestId: null },
-          { role: "assistant", text: "", requestId: action.requestId },
+          { role: "user", requestId: null, contentBlocks: [{ type: "text", text: action.text }] },
+          { role: "assistant", requestId: action.requestId, contentBlocks: [] },
         ],
         activeRequestIds: newRequestIds,
       };
@@ -129,21 +130,69 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, ...updates };
     }
 
-    case "STREAM_DELTA": {
-      const msgs = state.messages.map((m) =>
-        m.requestId === action.requestId
-          ? { ...m, text: m.text + action.text }
-          : m,
-      );
-      // If no existing message found for this requestId, add one
-      if (!state.messages.some((m) => m.requestId === action.requestId)) {
-        msgs.push({
-          role: "assistant",
-          text: action.text,
-          requestId: action.requestId,
-        });
+    case "SDK_MESSAGE": {
+      const sdk = action.sdkMessage;
+
+      // Only handle stream_event and tool_use_summary for rendering
+      if (sdk.type === "stream_event") {
+        const { event } = sdk;
+
+        if (event.type === "content_block_start") {
+          const block = event.content_block;
+          let newBlock: ContentBlockState;
+          if (block.type === "text") {
+            newBlock = { type: "text", text: block.text };
+          } else if (block.type === "tool_use") {
+            newBlock = { type: "tool_use", text: "", toolName: block.name, toolId: block.id, toolInput: "" };
+          } else if (block.type === "thinking") {
+            newBlock = { type: "thinking", text: block.thinking };
+          } else {
+            return state;
+          }
+
+          const msgs = state.messages.map((m) =>
+            m.requestId === action.requestId
+              ? { ...m, contentBlocks: [...m.contentBlocks, newBlock] }
+              : m,
+          );
+          return { ...state, messages: msgs };
+        }
+
+        if (event.type === "content_block_delta") {
+          const { index, delta } = event;
+          const msgs = state.messages.map((m) => {
+            if (m.requestId !== action.requestId) return m;
+            const blocks = [...m.contentBlocks];
+            const target = blocks[index];
+            if (!target) return m;
+
+            if (delta.type === "text_delta") {
+              blocks[index] = { ...target, text: target.text + delta.text };
+            } else if (delta.type === "input_json_delta") {
+              blocks[index] = { ...target, toolInput: (target.toolInput ?? "") + delta.partial_json };
+            } else if (delta.type === "thinking_delta") {
+              blocks[index] = { ...target, text: target.text + delta.thinking };
+            }
+            return { ...m, contentBlocks: blocks };
+          });
+          return { ...state, messages: msgs };
+        }
+
+        // content_block_stop, message_start/delta/stop: no-op
+        return state;
       }
-      return { ...state, messages: msgs };
+
+      if (sdk.type === "tool_use_summary") {
+        const msgs = state.messages.map((m) =>
+          m.requestId === action.requestId
+            ? { ...m, contentBlocks: [...m.contentBlocks, { type: "text" as const, text: sdk.summary }] }
+            : m,
+        );
+        return { ...state, messages: msgs };
+      }
+
+      // All other SDK message types: ignore
+      return state;
     }
 
     case "STREAM_DONE": {
@@ -168,7 +217,7 @@ function reducer(state: AppState, action: Action): AppState {
             m.requestId === action.requestId
               ? {
                   ...m,
-                  text: m.text ? m.text + "\n" + errText : errText,
+                  contentBlocks: [...m.contentBlocks, { type: "text" as const, text: errText }],
                   requestId: null,
                 }
               : m,
@@ -180,7 +229,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         messages: [
           ...state.messages,
-          { role: "assistant", text: errText, requestId: null },
+          { role: "assistant", requestId: null, contentBlocks: [{ type: "text", text: errText }] },
         ],
         activeRequestIds: newIds,
       };
@@ -251,8 +300,8 @@ export default function App() {
                         sessionId: route.sessionId!,
                         messages: hist.messages.map((m) => ({
                           role: m.role,
-                          text: m.text,
                           requestId: null,
+                          contentBlocks: [{ type: "text" as const, text: m.text }],
                         })),
                       });
                     },
@@ -315,14 +364,12 @@ export default function App() {
         }
         break;
 
-      case "stream.delta":
-        if (msg.text) {
-          dispatch({
-            type: "STREAM_DELTA",
-            requestId: msg.request_id,
-            text: msg.text,
-          });
-        }
+      case "stream.message":
+        dispatch({
+          type: "SDK_MESSAGE",
+          requestId: msg.request_id,
+          sdkMessage: msg.sdk_message,
+        });
         break;
 
       case "stream.done":
@@ -389,8 +436,8 @@ export default function App() {
               sessionId: route.sessionId!,
               messages: hist.messages.map((m) => ({
                 role: m.role,
-                text: m.text,
                 requestId: null,
+                contentBlocks: [{ type: "text" as const, text: m.text }],
               })),
             });
           });
@@ -430,8 +477,8 @@ export default function App() {
             sessionId: s.session_id,
             messages: hist.messages.map((m) => ({
               role: m.role,
-              text: m.text,
               requestId: null,
+              contentBlocks: [{ type: "text" as const, text: m.text }],
             })),
           });
         });

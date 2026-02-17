@@ -1,4 +1,4 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 export interface StreamPromptArgs {
 	requestId: string;
@@ -7,7 +7,7 @@ export interface StreamPromptArgs {
 	resumeSessionId?: string;
 	allowedTools: string[];
 	onSessionId: (sessionId: string) => void;
-	onDelta: (text: string) => void;
+	onMessage: (message: SDKMessage) => void;
 	onDone: () => void;
 	onError: (error: unknown) => void;
 }
@@ -42,22 +42,7 @@ export class ClaudeService implements ClaudeServiceLike {
 					args.onSessionId(message.session_id);
 				}
 
-				if (message.type === "stream_event") {
-					const { event } = message;
-					if (
-						event.type === "content_block_delta" &&
-						event.delta.type === "text_delta"
-					) {
-						args.onDelta(event.delta.text);
-					}
-				}
-
-				// if (message.type === "result") {
-				// 	if (!didEmitDone) {
-				// 		didEmitDone = true;
-				// 		args.onDone();
-				// 	}
-				// }
+				args.onMessage(message);
 			}
 
 			if (!didEmitDone) {

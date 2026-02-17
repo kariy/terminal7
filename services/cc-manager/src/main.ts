@@ -171,13 +171,20 @@ export function createServer(deps: ServerDeps): ServerHandle {
 					});
 				}
 			},
-			onDelta: (text) => {
-				streamedChars += text.length;
+			onMessage: (message) => {
+				if (
+					message.type === "stream_event" &&
+					message.event.type === "content_block_delta" &&
+					message.event.delta.type === "text_delta"
+				) {
+					streamedChars += message.event.delta.text.length;
+				}
+
 				wsSend(ws, {
-					type: "stream.delta",
+					type: "stream.message",
 					request_id: params.requestId,
 					session_id: resolvedSessionId,
-					text,
+					sdk_message: message,
 				});
 			},
 			onDone: () => {
