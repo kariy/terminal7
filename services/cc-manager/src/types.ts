@@ -130,6 +130,13 @@ export interface HealthResponse {
 	time: string;
 }
 
+// ── WebSocket connection state ───────────────────────────────────
+
+export interface WsConnectionState {
+	connectionId: string;
+	activeRequests: Set<string>;
+}
+
 // ── Internal param types ────────────────────────────────────────
 
 export interface HandlePromptParams {
