@@ -39,6 +39,7 @@ export class App {
 				last_activity_at: session.lastActivityAt,
 				source: session.source,
 				message_count: session.messageCount,
+				total_cost_usd: session.totalCostUsd,
 			})),
 		});
 	}

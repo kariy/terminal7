@@ -17,6 +17,7 @@ interface SessionMetadataRow {
 	updated_at: number;
 	last_activity_at: number;
 	source: "db" | "jsonl" | "merged";
+	total_cost_usd: number;
 }
 
 interface SessionSummaryRow extends SessionMetadataRow {
@@ -58,62 +59,86 @@ export class ManagerRepository {
 		const hasV1 = this.db
 			.query("SELECT 1 FROM schema_migrations WHERE version = 1")
 			.get() as { "1": number } | null;
-		if (hasV1) return;
+		if (!hasV1) {
+			this.db.transaction(() => {
+				this.db.exec(`
+					CREATE TABLE IF NOT EXISTS session_metadata (
+						session_id TEXT NOT NULL,
+						encoded_cwd TEXT NOT NULL,
+						cwd TEXT NOT NULL,
+						title TEXT NOT NULL,
+						created_at INTEGER NOT NULL,
+						updated_at INTEGER NOT NULL,
+						last_activity_at INTEGER NOT NULL,
+						source TEXT NOT NULL,
+						total_cost_usd REAL NOT NULL DEFAULT 0,
+						PRIMARY KEY (session_id, encoded_cwd)
+					);
+				`);
 
-		this.db.transaction(() => {
-			this.db.exec(`
-				CREATE TABLE IF NOT EXISTS session_metadata (
-					session_id TEXT NOT NULL,
-					encoded_cwd TEXT NOT NULL,
-					cwd TEXT NOT NULL,
-					title TEXT NOT NULL,
-					created_at INTEGER NOT NULL,
-					updated_at INTEGER NOT NULL,
-					last_activity_at INTEGER NOT NULL,
-					source TEXT NOT NULL,
-					PRIMARY KEY (session_id, encoded_cwd)
+				this.db.exec(`
+					CREATE TABLE IF NOT EXISTS session_events (
+						id INTEGER PRIMARY KEY AUTOINCREMENT,
+						session_id TEXT NOT NULL,
+						encoded_cwd TEXT NOT NULL,
+						event_type TEXT NOT NULL,
+						payload_json TEXT,
+						created_at INTEGER NOT NULL
+					);
+				`);
+
+				this.db.exec(`
+					CREATE TABLE IF NOT EXISTS session_file_index (
+						session_id TEXT NOT NULL,
+						encoded_cwd TEXT NOT NULL,
+						jsonl_path TEXT NOT NULL,
+						file_mtime_ms INTEGER NOT NULL,
+						file_size INTEGER NOT NULL,
+						message_count INTEGER NOT NULL,
+						first_user_text TEXT,
+						last_assistant_text TEXT,
+						last_indexed_at INTEGER NOT NULL,
+						PRIMARY KEY (session_id, encoded_cwd)
+					);
+				`);
+
+				this.db.exec(
+					"CREATE INDEX IF NOT EXISTS idx_session_metadata_activity ON session_metadata(last_activity_at DESC);",
 				);
-			`);
-
-			this.db.exec(`
-				CREATE TABLE IF NOT EXISTS session_events (
-					id INTEGER PRIMARY KEY AUTOINCREMENT,
-					session_id TEXT NOT NULL,
-					encoded_cwd TEXT NOT NULL,
-					event_type TEXT NOT NULL,
-					payload_json TEXT,
-					created_at INTEGER NOT NULL
+				this.db.exec(
+					"CREATE INDEX IF NOT EXISTS idx_session_events_lookup ON session_events(session_id, encoded_cwd, created_at DESC);",
 				);
-			`);
 
-			this.db.exec(`
-				CREATE TABLE IF NOT EXISTS session_file_index (
-					session_id TEXT NOT NULL,
-					encoded_cwd TEXT NOT NULL,
-					jsonl_path TEXT NOT NULL,
-					file_mtime_ms INTEGER NOT NULL,
-					file_size INTEGER NOT NULL,
-					message_count INTEGER NOT NULL,
-					first_user_text TEXT,
-					last_assistant_text TEXT,
-					last_indexed_at INTEGER NOT NULL,
-					PRIMARY KEY (session_id, encoded_cwd)
-				);
-			`);
+				this.db
+					.query(
+						"INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?)",
+					)
+					.run(nowMs());
+			})();
+		}
 
-			this.db.exec(
-				"CREATE INDEX IF NOT EXISTS idx_session_metadata_activity ON session_metadata(last_activity_at DESC);",
-			);
-			this.db.exec(
-				"CREATE INDEX IF NOT EXISTS idx_session_events_lookup ON session_events(session_id, encoded_cwd, created_at DESC);",
-			);
-
-			this.db
-				.query(
-					"INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?)",
-				)
-				.run(nowMs());
-		})();
+		// V2: Add total_cost_usd column to session_metadata
+		const hasV2 = this.db
+			.query("SELECT 1 FROM schema_migrations WHERE version = 2")
+			.get() as { "1": number } | null;
+		if (!hasV2) {
+			this.db.transaction(() => {
+				// Column may already exist if V1 was applied fresh with V2 schema
+				const cols = this.db
+					.query("PRAGMA table_info(session_metadata)")
+					.all() as { name: string }[];
+				if (!cols.some((c) => c.name === "total_cost_usd")) {
+					this.db.exec(
+						"ALTER TABLE session_metadata ADD COLUMN total_cost_usd REAL NOT NULL DEFAULT 0;",
+					);
+				}
+				this.db
+					.query(
+						"INSERT INTO schema_migrations (version, applied_at) VALUES (2, ?)",
+					)
+					.run(nowMs());
+			})();
+		}
 	}
 
 	private getMetadataRow(
@@ -134,6 +159,7 @@ export class ManagerRepository {
 		title: string;
 		lastActivityAt?: number;
 		source: "db" | "jsonl";
+		costToAdd?: number;
 	}): SessionMetadata {
 		const ts = nowMs();
 		const activity = params.lastActivityAt ?? ts;
@@ -147,12 +173,14 @@ export class ManagerRepository {
 				: "merged"
 			: params.source;
 		const createdAt = existing?.created_at ?? ts;
+		const totalCostUsd =
+			(existing?.total_cost_usd ?? 0) + (params.costToAdd ?? 0);
 
 		this.db
 			.query(
 				`INSERT OR REPLACE INTO session_metadata (
-					session_id, encoded_cwd, cwd, title, created_at, updated_at, last_activity_at, source
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+					session_id, encoded_cwd, cwd, title, created_at, updated_at, last_activity_at, source, total_cost_usd
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			)
 			.run(
 				params.sessionId,
@@ -163,6 +191,7 @@ export class ManagerRepository {
 				ts,
 				activity,
 				source,
+				totalCostUsd,
 			);
 
 		return {
@@ -174,6 +203,7 @@ export class ManagerRepository {
 			updatedAt: ts,
 			lastActivityAt: activity,
 			source,
+			totalCostUsd,
 		};
 	}
 
@@ -218,6 +248,7 @@ export class ManagerRepository {
 					sm.updated_at,
 					sm.last_activity_at,
 					sm.source,
+					sm.total_cost_usd,
 					COALESCE(fi.message_count, 0) AS message_count
 				FROM session_metadata sm
 				LEFT JOIN session_file_index fi
@@ -235,6 +266,7 @@ export class ManagerRepository {
 			updatedAt: row.updated_at,
 			lastActivityAt: row.last_activity_at,
 			source: row.source,
+			totalCostUsd: row.total_cost_usd,
 			messageCount: row.message_count,
 		}));
 	}
@@ -254,6 +286,7 @@ export class ManagerRepository {
 			updatedAt: row.updated_at,
 			lastActivityAt: row.last_activity_at,
 			source: row.source,
+			totalCostUsd: row.total_cost_usd,
 		};
 	}
 
@@ -269,6 +302,7 @@ export class ManagerRepository {
 					sm.updated_at,
 					sm.last_activity_at,
 					sm.source,
+					sm.total_cost_usd,
 					COALESCE(fi.message_count, 0) AS message_count
 				FROM session_metadata sm
 				LEFT JOIN session_file_index fi
@@ -287,6 +321,7 @@ export class ManagerRepository {
 			updatedAt: row.updated_at,
 			lastActivityAt: row.last_activity_at,
 			source: row.source,
+			totalCostUsd: row.total_cost_usd,
 			messageCount: row.message_count,
 		}));
 	}

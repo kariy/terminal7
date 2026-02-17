@@ -2,10 +2,16 @@ import { ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { WsStatus } from "@/hooks/use-websocket";
 
+function formatCost(usd: number): string {
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
 interface HeaderProps {
   title: string;
   status: WsStatus;
   showBack: boolean;
+  totalCostUsd?: number;
   onBack: () => void;
   onDisconnect: () => void;
 }
@@ -14,6 +20,7 @@ export function Header({
   title,
   status,
   showBack,
+  totalCostUsd,
   onBack,
   onDisconnect,
 }: HeaderProps) {
@@ -42,6 +49,9 @@ export function Header({
           className={`text-xs ${status === "connected" ? "text-foreground/60" : "text-muted-foreground"}`}
         >
           {statusText}
+          {totalCostUsd != null && totalCostUsd > 0 && (
+            <> &middot; {formatCost(totalCostUsd)}</>
+          )}
         </div>
       </div>
       {status === "connected" && (

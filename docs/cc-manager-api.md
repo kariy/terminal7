@@ -47,7 +47,8 @@ List all known sessions, ordered by most recent activity first.
       "updated_at": 1705300100000,
       "last_activity_at": 1705300100000,
       "source": "db",               // "db" | "jsonl" | "merged"
-      "message_count": 12
+      "message_count": 12,
+      "total_cost_usd": 0.42        // cumulative cost across all prompts
     }
   ]
 }
@@ -478,6 +479,7 @@ Session identity is a composite key of `(session_id, encoded_cwd)`. The `encoded
 | `updated_at`      | INTEGER | Last update timestamp (epoch ms)     |
 | `last_activity_at`| INTEGER | Last activity timestamp (epoch ms)   |
 | `source`          | TEXT    | `"db"`, `"jsonl"`, or `"merged"`     |
+| `total_cost_usd`  | REAL    | Cumulative cost in USD (default 0)   |
 
 ### `session_events`
 

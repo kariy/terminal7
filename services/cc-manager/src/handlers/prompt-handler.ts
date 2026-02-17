@@ -14,6 +14,7 @@ export function createPromptHandler(app: App) {
 
 		ws.data.activeRequests.add(params.requestId);
 		let streamedChars = 0;
+		let totalCostUsd = 0;
 
 		await app.claudeService.streamPrompt({
 			requestId: params.requestId,
@@ -84,6 +85,13 @@ export function createPromptHandler(app: App) {
 					streamedChars += message.event.delta.text.length;
 				}
 
+				if (
+					message.type === "result" &&
+					typeof (message as any).total_cost_usd === "number"
+				) {
+					totalCostUsd = (message as any).total_cost_usd;
+				}
+
 				wsSend(ws, {
 					type: "stream.message",
 					request_id: params.requestId,
@@ -105,6 +113,7 @@ export function createPromptHandler(app: App) {
 						),
 						lastActivityAt: nowMs(),
 						source: "db",
+						costToAdd: totalCostUsd,
 					});
 					app.repository.recordEvent({
 						sessionId: resolvedSessionId,
@@ -113,6 +122,7 @@ export function createPromptHandler(app: App) {
 						payload: {
 							request_id: params.requestId,
 							streamed_chars: streamedChars,
+							total_cost_usd: totalCostUsd,
 							device_id: "local",
 						},
 					});

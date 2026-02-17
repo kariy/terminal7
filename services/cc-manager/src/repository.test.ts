@@ -42,4 +42,32 @@ describe("ManagerRepository", () => {
 		repo.close();
 	});
 
+	test("accumulates total_cost_usd across multiple upserts", () => {
+		const repo = createRepository();
+		repo.upsertSessionMetadata({
+			sessionId: "session-cost",
+			encodedCwd: "-tmp-project",
+			cwd: "/tmp/project",
+			title: "Cost test",
+			source: "db",
+			costToAdd: 0.05,
+		});
+		repo.upsertSessionMetadata({
+			sessionId: "session-cost",
+			encodedCwd: "-tmp-project",
+			cwd: "/tmp/project",
+			title: "Cost test",
+			source: "db",
+			costToAdd: 0.10,
+		});
+
+		const sessions = repo.listSessions();
+		const session = sessions.find((s) => s.sessionId === "session-cost");
+		expect(session?.totalCostUsd).toBeCloseTo(0.15);
+
+		const metadata = repo.getSessionMetadata("session-cost", "-tmp-project");
+		expect(metadata?.totalCostUsd).toBeCloseTo(0.15);
+		repo.close();
+	});
+
 });

@@ -680,12 +680,14 @@ export default function App() {
   // ── Header title ──
 
   let headerTitle = "Claude Manager";
+  let headerCost: number | undefined;
   if (state.view === "chat") {
     if (state.activeSessionId) {
       const s = state.sessions.find(
         (s) => s.session_id === state.activeSessionId,
       );
       headerTitle = s?.title || "Untitled session";
+      headerCost = s?.total_cost_usd;
     } else {
       headerTitle = "New Session";
     }
@@ -697,6 +699,7 @@ export default function App() {
         title={headerTitle}
         status={status}
         showBack={state.view === "chat"}
+        totalCostUsd={headerCost}
         onBack={handleReturnToSessions}
         onDisconnect={handleDisconnect}
       />

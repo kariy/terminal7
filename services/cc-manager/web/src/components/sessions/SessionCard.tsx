@@ -8,6 +8,11 @@ interface SessionCardProps {
   onClick: () => void;
 }
 
+function formatCost(usd: number): string {
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
 export function SessionCard({ session, onClick }: SessionCardProps) {
   return (
     <Card
@@ -25,6 +30,12 @@ export function SessionCard({ session, onClick }: SessionCardProps) {
           {relativeTime(session.last_activity_at || session.updated_at)}
           {" \u00B7 "}
           {session.message_count || 0} messages
+          {session.total_cost_usd > 0 && (
+            <>
+              {" \u00B7 "}
+              {formatCost(session.total_cost_usd)}
+            </>
+          )}
         </div>
       </div>
       <ChevronRight className="h-4 w-4 text-muted-foreground/50 shrink-0" />

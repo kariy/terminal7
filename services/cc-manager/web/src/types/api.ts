@@ -8,6 +8,7 @@ export interface SessionListItem {
   last_activity_at: number;
   source: string;
   message_count: number;
+  total_cost_usd: number;
 }
 
 export interface SessionListResponse {
