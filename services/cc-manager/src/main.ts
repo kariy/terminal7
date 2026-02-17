@@ -145,6 +145,7 @@ export function createServer(deps: ServerDeps): ServerHandle {
 		const sessionId = url.searchParams.get("session_id");
 		const encodedCwd = url.searchParams.get("encoded_cwd");
 		const sshDestination = url.searchParams.get("ssh_destination");
+		const sshPassword = url.searchParams.get("ssh_password");
 		const cols = Number.parseInt(url.searchParams.get("cols") ?? "80", 10);
 		const rows = Number.parseInt(url.searchParams.get("rows") ?? "24", 10);
 
@@ -185,6 +186,7 @@ export function createServer(deps: ServerDeps): ServerHandle {
 				encodedCwd,
 				cwd: metadata.cwd,
 				sshDestination,
+				sshPassword,
 				cols: Number.isNaN(cols) ? 80 : cols,
 				rows: Number.isNaN(rows) ? 24 : rows,
 			} satisfies WsTerminalState,
@@ -200,7 +202,7 @@ export function createServer(deps: ServerDeps): ServerHandle {
 	}
 
 	function handleTerminalOpen(ws: Bun.ServerWebSocket<WsTerminalState>) {
-		const { connectionId, sessionId, cwd, sshDestination, cols, rows } = ws.data;
+		const { connectionId, sessionId, cwd, sshDestination, sshPassword, cols, rows } = ws.data;
 		log.terminal(`connected connection_id=${connectionId} session_id=${sessionId}`);
 
 		if (!terminalService) {
@@ -215,6 +217,7 @@ export function createServer(deps: ServerDeps): ServerHandle {
 		try {
 			terminal = terminalService.open({
 				sshDestination,
+				sshPassword: sshPassword ?? undefined,
 				remoteCommand,
 				cols,
 				rows,

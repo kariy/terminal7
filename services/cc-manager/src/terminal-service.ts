@@ -8,6 +8,7 @@ export interface TerminalHandle {
 
 export interface TerminalOpenParams {
 	sshDestination: string;
+	sshPassword?: string;
 	remoteCommand: string;
 	cols: number;
 	rows: number;
@@ -19,24 +20,73 @@ export interface TerminalServiceLike {
 	open(params: TerminalOpenParams): TerminalHandle;
 }
 
+// Python script that spawns a command in a PTY, auto-sends a password
+// when it detects the SSH password prompt, then relays I/O normally.
+const PTY_HELPER_SCRIPT = `
+import pty, os, sys, select, errno
+
+password = os.environ.get("SSH_AUTO_PASSWORD", "")
+cmd = sys.argv[1:]
+
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(cmd[0], cmd)
+
+sent = False
+try:
+    while True:
+        try:
+            r, _, _ = select.select([fd, 0], [], [], 0.1)
+        except (ValueError, OSError):
+            break
+        if fd in r:
+            try:
+                data = os.read(fd, 4096)
+            except OSError as e:
+                if e.errno == errno.EIO:
+                    break
+                raise
+            if not data:
+                break
+            os.write(1, data)
+            if not sent and password and b"assword" in data:
+                os.write(fd, (password + "\\n").encode())
+                sent = True
+        if 0 in r:
+            try:
+                data = os.read(0, 4096)
+            except OSError:
+                break
+            if not data:
+                break
+            os.write(fd, data)
+except KeyboardInterrupt:
+    pass
+
+try:
+    _, status = os.waitpid(pid, 0)
+    sys.exit(os.waitstatus_to_exitcode(status))
+except ChildProcessError:
+    sys.exit(1)
+`.trim();
+
 export class TerminalService implements TerminalServiceLike {
 	open(params: TerminalOpenParams): TerminalHandle {
-		const { sshDestination, remoteCommand, cols, rows, onData, onExit } = params;
+		const { sshDestination, sshPassword, remoteCommand, cols, rows, onData, onExit } = params;
 
-		// Wrap SSH in Python's pty.spawn() to get a real PTY, enabling
-		// password prompts and proper terminal behavior. Unlike `script`,
-		// Python gracefully handles a non-TTY stdin.
 		const sizeSetup = `stty rows ${rows} cols ${cols} 2>/dev/null;`;
 		const fullCommand = `${sizeSetup} ${remoteCommand}`;
 
 		const sshArgs = ["ssh", "-t", "-o", "StrictHostKeyChecking=accept-new", sshDestination, fullCommand];
-		const args = [
-			"python3", "-c", "import pty,sys; pty.spawn(sys.argv[1:])",
-			...sshArgs,
-		];
+		const args = ["python3", "-c", PTY_HELPER_SCRIPT, ...sshArgs];
 
-		log.terminal(`spawning: ${args.join(" ")}`);
+		log.terminal(`spawning ssh to ${sshDestination} cols=${cols} rows=${rows} password=${sshPassword ? "yes" : "no"}`);
 		log.terminal(`remote command: ${remoteCommand}`);
+
+		const env = { ...process.env, TERM: "xterm-256color" };
+		if (sshPassword) {
+			env.SSH_AUTO_PASSWORD = sshPassword;
+		}
 
 		let proc: ReturnType<typeof Bun.spawn>;
 		try {
@@ -44,7 +94,7 @@ export class TerminalService implements TerminalServiceLike {
 				stdin: "pipe",
 				stdout: "pipe",
 				stderr: "pipe",
-				env: { ...process.env, TERM: "xterm-256color" },
+				env,
 			});
 			log.terminal(`process spawned pid=${proc.pid}`);
 		} catch (err) {

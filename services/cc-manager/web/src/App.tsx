@@ -5,7 +5,7 @@ import type { WsServerMessage, WsSessionMeta } from "@/types/ws";
 import type { SDKMessage } from "@/types/sdk-messages";
 import type { SessionListItem, HistoryMessage } from "@/types/api";
 import { fetchSessions, fetchHistory } from "@/lib/api";
-import { getSshDestination, setSshDestination } from "@/lib/settings";
+import { getSshDestination, setSshDestination, getSshPassword, setSshPassword } from "@/lib/settings";
 import { Header } from "@/components/layout/Header";
 import { SshDestinationDialog } from "@/components/SshDestinationDialog";
 import { ConnectingView } from "@/components/views/ConnectingView";
@@ -745,21 +745,22 @@ export default function App() {
         sessionId: s.session_id,
         encodedCwd: s.encoded_cwd,
       });
-      terminal.open(s.session_id, s.encoded_cwd, dest);
+      terminal.open(s.session_id, s.encoded_cwd, dest, getSshPassword() ?? undefined);
     },
     [state.sessions, terminal],
   );
 
   const handleSshDialogSave = useCallback(
-    (value: string) => {
-      setSshDestination(value);
+    (destination: string, password: string) => {
+      setSshDestination(destination);
+      setSshPassword(password);
       setShowSshDialog(false);
 
       if (pendingTerminalSession) {
         const { sessionId, encodedCwd } = pendingTerminalSession;
         setPendingTerminalSession(null);
         dispatch({ type: "OPEN_TERMINAL", sessionId, encodedCwd });
-        terminal.open(sessionId, encodedCwd, value);
+        terminal.open(sessionId, encodedCwd, destination, password || undefined);
       }
     },
     [pendingTerminalSession, terminal],

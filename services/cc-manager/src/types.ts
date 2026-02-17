@@ -182,6 +182,7 @@ export interface WsTerminalState {
 	encodedCwd: string;
 	cwd: string;
 	sshDestination: string;
+	sshPassword: string | null;
 	cols: number;
 	rows: number;
 }

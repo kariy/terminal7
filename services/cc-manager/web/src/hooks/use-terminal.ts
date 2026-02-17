@@ -9,6 +9,7 @@ interface PendingConnection {
   sessionId: string;
   encodedCwd: string;
   sshDestination: string;
+  sshPassword?: string;
 }
 
 export function useTerminal() {
@@ -38,7 +39,7 @@ export function useTerminal() {
 
   const connect = useCallback(
     (container: HTMLDivElement, pending: PendingConnection) => {
-      const { sessionId, encodedCwd, sshDestination } = pending;
+      const { sessionId, encodedCwd, sshDestination, sshPassword } = pending;
       pendingRef.current = null;
 
       const term = new Terminal({
@@ -74,6 +75,9 @@ export function useTerminal() {
         cols: String(cols),
         rows: String(rows),
       });
+      if (sshPassword) {
+        params.set("ssh_password", sshPassword);
+      }
       const ws = new WebSocket(`${proto}//${location.host}/v1/terminal?${params}`);
       wsRef.current = ws;
 
@@ -136,15 +140,15 @@ export function useTerminal() {
   );
 
   const open = useCallback(
-    (sessionId: string, encodedCwd: string, sshDestination: string) => {
+    (sessionId: string, encodedCwd: string, sshDestination: string, sshPassword?: string) => {
       cleanup();
       setStatus("connecting");
-      pendingRef.current = { sessionId, encodedCwd, sshDestination };
+      pendingRef.current = { sessionId, encodedCwd, sshDestination, sshPassword };
 
       // If the container is already mounted, connect immediately.
       // Otherwise, the effect below will pick it up after render.
       if (containerRef.current) {
-        connect(containerRef.current, { sessionId, encodedCwd, sshDestination });
+        connect(containerRef.current, { sessionId, encodedCwd, sshDestination, sshPassword });
       }
     },
     [cleanup, connect],
