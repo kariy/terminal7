@@ -3,8 +3,8 @@ import { useWebSocket } from "@/hooks/use-websocket";
 import { useTerminal } from "@/hooks/use-terminal";
 import type { WsServerMessage, WsSessionMeta } from "@/types/ws";
 import type { SDKMessage } from "@/types/sdk-messages";
-import type { SessionListItem, HistoryMessage } from "@/types/api";
-import { fetchSessions, fetchHistory } from "@/lib/api";
+import type { SessionListItem, HistoryMessage, SshConnectionItem } from "@/types/api";
+import { fetchSessions, fetchHistory, fetchSshConnections, createSshConnection, deleteSshConnection } from "@/lib/api";
 import { getSshDestination, setSshDestination, getSshPassword, setSshPassword } from "@/lib/settings";
 import { Header, type HeaderTab } from "@/components/layout/Header";
 import { SshDestinationDialog } from "@/components/SshDestinationDialog";
@@ -23,23 +23,27 @@ type View = "connecting" | "sessions" | "ssh" | "chat" | "terminal";
 interface AppState {
   view: View;
   sessions: SessionListItem[];
+  sshConnections: SshConnectionItem[];
   activeSessionId: string | null;
   activeEncodedCwd: string | null;
   activeSessionMeta: WsSessionMeta | null;
   messages: ChatMessage[];
   activeRequestIds: Set<string>;
   terminalOrigin: "sessions" | "ssh";
+  activeSshConnectionId: string | null;
 }
 
 const initialState: AppState = {
   view: "connecting",
   sessions: [],
+  sshConnections: [],
   activeSessionId: null,
   activeEncodedCwd: null,
   activeSessionMeta: null,
   messages: [],
   activeRequestIds: new Set(),
   terminalOrigin: "sessions",
+  activeSshConnectionId: null,
 };
 
 // ── Actions ──
@@ -70,6 +74,8 @@ type Action =
   | { type: "SET_SESSION_META"; meta: WsSessionMeta }
   | { type: "OPEN_TERMINAL"; sessionId: string; encodedCwd: string }
   | { type: "OPEN_SSH_TERMINAL" }
+  | { type: "OPEN_SSH_CONNECTION"; connectionId: string }
+  | { type: "SET_SSH_CONNECTIONS"; connections: SshConnectionItem[] }
   | { type: "CLOSE_TERMINAL" };
 
 function reducer(state: AppState, action: Action): AppState {
@@ -332,6 +338,17 @@ function reducer(state: AppState, action: Action): AppState {
         terminalOrigin: "ssh",
       };
 
+    case "OPEN_SSH_CONNECTION":
+      return {
+        ...state,
+        view: "terminal",
+        terminalOrigin: "ssh",
+        activeSshConnectionId: action.connectionId,
+      };
+
+    case "SET_SSH_CONNECTIONS":
+      return { ...state, sshConnections: action.connections };
+
     case "CLOSE_TERMINAL":
       return {
         ...state,
@@ -513,6 +530,9 @@ export default function App() {
                 }
               } else if (route.view === "ssh") {
                 dispatch({ type: "SET_VIEW", view: "ssh" });
+                fetchSshConnections()
+                  .then((data) => dispatch({ type: "SET_SSH_CONNECTIONS", connections: data.connections }))
+                  .catch(() => {});
               } else {
                 dispatch({ type: "SET_VIEW", view: "sessions" });
               }
@@ -672,6 +692,9 @@ export default function App() {
         }
       } else if (route.view === "ssh") {
         dispatch({ type: "SET_VIEW", view: "ssh" });
+        fetchSshConnections()
+          .then((data) => dispatch({ type: "SET_SSH_CONNECTIONS", connections: data.connections }))
+          .catch(() => {});
       } else {
         dispatch({ type: "RETURN_TO_SESSIONS" });
       }
@@ -793,6 +816,12 @@ export default function App() {
     [state.sessions, terminal],
   );
 
+  const handleRefreshSshConnections = useCallback(() => {
+    fetchSshConnections()
+      .then((data) => dispatch({ type: "SET_SSH_CONNECTIONS", connections: data.connections }))
+      .catch(() => {});
+  }, []);
+
   const handleSshDialogSave = useCallback(
     (destination: string, password: string) => {
       setSshDestination(destination);
@@ -804,9 +833,18 @@ export default function App() {
         setPendingTerminalSession(null);
         dispatch({ type: "OPEN_TERMINAL", sessionId, encodedCwd });
         terminal.open(sessionId, encodedCwd, destination, password || undefined);
+      } else if (stateRef.current.view === "ssh") {
+        // Creating a new SSH connection after setting destination
+        createSshConnection({ ssh_destination: destination })
+          .then((data) => {
+            handleRefreshSshConnections();
+            dispatch({ type: "OPEN_SSH_CONNECTION", connectionId: data.connection.id });
+            terminal.openSshConnection(data.connection.id, password || undefined);
+          })
+          .catch(() => {});
       }
     },
-    [pendingTerminalSession, terminal],
+    [pendingTerminalSession, terminal, handleRefreshSshConnections],
   );
 
   const handleSshDialogCancel = useCallback(() => {
@@ -818,12 +856,36 @@ export default function App() {
     setShowSshDialog(true);
   }, []);
 
-  const handleConnectSsh = useCallback(
-    (destination: string, password?: string) => {
-      dispatch({ type: "OPEN_SSH_TERMINAL" });
-      terminal.openSsh(destination, password);
+  const handleConnectSshConnection = useCallback(
+    (connectionId: string) => {
+      dispatch({ type: "OPEN_SSH_CONNECTION", connectionId });
+      terminal.openSshConnection(connectionId, getSshPassword() ?? undefined);
     },
     [terminal],
+  );
+
+  const handleNewSshConnection = useCallback(() => {
+    const dest = getSshDestination();
+    if (!dest) {
+      setShowSshDialog(true);
+      return;
+    }
+    createSshConnection({ ssh_destination: dest })
+      .then((data) => {
+        handleRefreshSshConnections();
+        dispatch({ type: "OPEN_SSH_CONNECTION", connectionId: data.connection.id });
+        terminal.openSshConnection(data.connection.id, getSshPassword() ?? undefined);
+      })
+      .catch(() => {});
+  }, [terminal, handleRefreshSshConnections]);
+
+  const handleDeleteSshConnection = useCallback(
+    (id: string) => {
+      deleteSshConnection(id)
+        .then(() => handleRefreshSshConnections())
+        .catch(() => {});
+    },
+    [handleRefreshSshConnections],
   );
 
   const handleTabChange = useCallback(
@@ -839,6 +901,9 @@ export default function App() {
       } else {
         dispatch({ type: "SET_VIEW", view: "ssh" });
         pushUrl("/ssh");
+        fetchSshConnections()
+          .then((data) => dispatch({ type: "SET_SSH_CONNECTIONS", connections: data.connections }))
+          .catch(() => {});
       }
     },
     [],
@@ -850,6 +915,9 @@ export default function App() {
     dispatch({ type: "CLOSE_TERMINAL" });
     if (origin === "ssh") {
       pushUrl("/ssh");
+      fetchSshConnections()
+        .then((data) => dispatch({ type: "SET_SSH_CONNECTIONS", connections: data.connections }))
+        .catch(() => {});
     } else {
       pushUrl("/");
       fetchSessions(false)
@@ -884,7 +952,12 @@ export default function App() {
     }
   } else if (state.view === "terminal") {
     if (state.terminalOrigin === "ssh") {
-      headerTitle = "SSH Terminal";
+      if (state.activeSshConnectionId) {
+        const conn = state.sshConnections.find((c) => c.id === state.activeSshConnectionId);
+        headerTitle = conn?.title || "SSH Terminal";
+      } else {
+        headerTitle = "SSH Terminal";
+      }
     } else {
       const s = state.sessions.find(
         (s) => s.session_id === state.activeSessionId,
@@ -917,7 +990,13 @@ export default function App() {
         />
       )}
       {state.view === "ssh" && (
-        <SshView onConnect={handleConnectSsh} />
+        <SshView
+          connections={state.sshConnections}
+          onRefresh={handleRefreshSshConnections}
+          onConnect={handleConnectSshConnection}
+          onNewConnection={handleNewSshConnection}
+          onDelete={handleDeleteSshConnection}
+        />
       )}
       {state.view === "chat" && (
         <ChatView

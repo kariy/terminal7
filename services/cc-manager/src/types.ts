@@ -52,6 +52,41 @@ export interface JsonlIndexUpdate {
 	fileMtimeMs: number;
 }
 
+// ── SSH Connection types ─────────────────────────────────────────
+
+export interface SshConnection {
+	id: string;
+	sshDestination: string;
+	tmuxSessionName: string;
+	title: string;
+	createdAt: number;
+	lastConnectedAt: number;
+}
+
+export interface SshConnectionListItem {
+	id: string;
+	ssh_destination: string;
+	tmux_session_name: string;
+	title: string;
+	created_at: number;
+	last_connected_at: number;
+}
+
+export interface SshConnectionListResponse {
+	connections: SshConnectionListItem[];
+}
+
+export function toSshConnectionListItem(c: SshConnection): SshConnectionListItem {
+	return {
+		id: c.id,
+		ssh_destination: c.sshDestination,
+		tmux_session_name: c.tmuxSessionName,
+		title: c.title,
+		created_at: c.createdAt,
+		last_connected_at: c.lastConnectedAt,
+	};
+}
+
 // ── WebSocket session metadata (wire format) ────────────────────
 
 export interface WsSessionMeta {
@@ -205,6 +240,7 @@ export interface WsTerminalState {
 	cwd?: string;
 	sshDestination: string;
 	sshPassword: string | null;
+	tmuxSessionName?: string;
 	cols: number;
 	rows: number;
 }

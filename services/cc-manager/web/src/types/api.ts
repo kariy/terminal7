@@ -31,6 +31,19 @@ export interface SessionListResponse {
   sessions: SessionListItem[];
 }
 
+export interface SshConnectionItem {
+  id: string;
+  ssh_destination: string;
+  tmux_session_name: string;
+  title: string;
+  created_at: number;
+  last_connected_at: number;
+}
+
+export interface SshConnectionListResponse {
+  connections: SshConnectionItem[];
+}
+
 export interface HistoryMessage {
   role: "user" | "assistant";
   text: string;

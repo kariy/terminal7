@@ -4,6 +4,7 @@ import type { GitServiceLike } from "./git-service";
 import { jsonResponse } from "./http-utils";
 import type { ManagerRepository } from "./repository";
 import type { IndexerLike } from "./main";
+import { toSshConnectionListItem } from "./types";
 
 export class App {
 	readonly repository: ManagerRepository;
@@ -120,5 +121,69 @@ export class App {
 			next_cursor: history.nextCursor,
 			total_messages: history.totalMessages,
 		});
+	}
+
+	// ── SSH Connections ──────────────────────────────────────────
+
+	listSshConnections(): Response {
+		const connections = this.repository.listSshConnections();
+		return jsonResponse(200, {
+			connections: connections.map(toSshConnectionListItem),
+		});
+	}
+
+	async createSshConnection(req: Request): Promise<Response> {
+		let body: { ssh_destination?: string; title?: string };
+		try {
+			body = await req.json();
+		} catch {
+			return jsonResponse(400, {
+				error: { code: "invalid_json", message: "Invalid JSON body" },
+			});
+		}
+
+		const sshDestination = body.ssh_destination;
+		if (!sshDestination || typeof sshDestination !== "string" || !sshDestination.trim()) {
+			return jsonResponse(400, {
+				error: {
+					code: "invalid_params",
+					message: "ssh_destination is required",
+				},
+			});
+		}
+
+		const title = typeof body.title === "string" && body.title.trim()
+			? body.title.trim()
+			: undefined;
+
+		const connection = this.repository.createSshConnection({
+			sshDestination: sshDestination.trim(),
+			title,
+		});
+
+		return jsonResponse(201, { connection: toSshConnectionListItem(connection) });
+	}
+
+	deleteSshConnection(req: Request): Response {
+		const url = new URL(req.url);
+		const match = url.pathname.match(/^\/v1\/ssh\/connections\/([^/]+)$/);
+		if (!match?.[1]) {
+			return jsonResponse(404, {
+				error: { code: "not_found", message: "Not found" },
+			});
+		}
+
+		const id = decodeURIComponent(match[1]);
+		const deleted = this.repository.deleteSshConnection(id);
+		if (!deleted) {
+			return jsonResponse(404, {
+				error: {
+					code: "connection_not_found",
+					message: "SSH connection not found",
+				},
+			});
+		}
+
+		return new Response(null, { status: 204 });
 	}
 }

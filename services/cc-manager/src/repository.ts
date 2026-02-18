@@ -6,6 +6,7 @@ import type {
 	RepositoryInfo,
 	SessionMetadata,
 	SessionSummary,
+	SshConnection,
 } from "./types";
 import { nowMs } from "./utils";
 
@@ -36,6 +37,15 @@ interface RepositoryRow {
 
 interface SessionSummaryRow extends SessionMetadataRow {
 	message_count: number;
+}
+
+interface SshConnectionRow {
+	id: string;
+	ssh_destination: string;
+	tmux_session_name: string;
+	title: string;
+	created_at: number;
+	last_connected_at: number;
 }
 
 interface FileIndexRow {
@@ -197,6 +207,34 @@ export class ManagerRepository {
 				this.db
 					.query(
 						"INSERT INTO schema_migrations (version, applied_at) VALUES (3, ?)",
+					)
+					.run(nowMs());
+			})();
+		}
+
+		// V4: Add ssh_connections table
+		const hasV4 = this.db
+			.query("SELECT 1 FROM schema_migrations WHERE version = 4")
+			.get() as { "1": number } | null;
+		if (!hasV4) {
+			this.db.transaction(() => {
+				this.db.exec(`
+					CREATE TABLE IF NOT EXISTS ssh_connections (
+						id TEXT PRIMARY KEY,
+						ssh_destination TEXT NOT NULL,
+						tmux_session_name TEXT NOT NULL UNIQUE,
+						title TEXT NOT NULL,
+						created_at INTEGER NOT NULL,
+						last_connected_at INTEGER NOT NULL
+					);
+				`);
+				this.db.exec(
+					"CREATE INDEX IF NOT EXISTS idx_ssh_connections_last_connected ON ssh_connections(last_connected_at DESC);",
+				);
+
+				this.db
+					.query(
+						"INSERT INTO schema_migrations (version, applied_at) VALUES (4, ?)",
 					)
 					.run(nowMs());
 			})();
@@ -501,6 +539,72 @@ export class ManagerRepository {
 				"UPDATE repositories SET last_fetched_at = ?, default_branch = ? WHERE id = ?",
 			)
 			.run(nowMs(), defaultBranch, id);
+	}
+
+	// ── SSH Connection methods ───────────────────────────────────────
+
+	listSshConnections(): SshConnection[] {
+		const rows = this.db
+			.query(
+				"SELECT * FROM ssh_connections ORDER BY last_connected_at DESC",
+			)
+			.all() as SshConnectionRow[];
+
+		return rows.map((row) => this.mapSshConnectionRow(row));
+	}
+
+	createSshConnection(params: {
+		sshDestination: string;
+		title?: string;
+	}): SshConnection {
+		const id = crypto.randomUUID();
+		const tmuxSessionName = `cc-${id.slice(0, 8)}`;
+		const title = params.title || params.sshDestination;
+		const ts = nowMs();
+
+		this.db
+			.query(
+				`INSERT INTO ssh_connections (
+					id, ssh_destination, tmux_session_name, title, created_at, last_connected_at
+				) VALUES (?, ?, ?, ?, ?, ?)`,
+			)
+			.run(id, params.sshDestination, tmuxSessionName, title, ts, ts);
+
+		return { id, sshDestination: params.sshDestination, tmuxSessionName, title, createdAt: ts, lastConnectedAt: ts };
+	}
+
+	getSshConnection(id: string): SshConnection | null {
+		const row = this.db
+			.query("SELECT * FROM ssh_connections WHERE id = ?")
+			.get(id) as SshConnectionRow | null;
+		if (!row) return null;
+		return this.mapSshConnectionRow(row);
+	}
+
+	deleteSshConnection(id: string): boolean {
+		const result = this.db
+			.query("DELETE FROM ssh_connections WHERE id = ?")
+			.run(id);
+		return result.changes > 0;
+	}
+
+	touchSshConnection(id: string): void {
+		this.db
+			.query(
+				"UPDATE ssh_connections SET last_connected_at = ? WHERE id = ?",
+			)
+			.run(nowMs(), id);
+	}
+
+	private mapSshConnectionRow(row: SshConnectionRow): SshConnection {
+		return {
+			id: row.id,
+			sshDestination: row.ssh_destination,
+			tmuxSessionName: row.tmux_session_name,
+			title: row.title,
+			createdAt: row.created_at,
+			lastConnectedAt: row.last_connected_at,
+		};
 	}
 
 	private mapRepositoryRow(row: RepositoryRow): RepositoryInfo {

@@ -128,9 +128,24 @@ export function createServer(deps: ServerDeps): ServerHandle {
 				return app.getSessionHistory(req);
 			}
 
+			if (pathname === "/v1/ssh/connections" && req.method === "GET") {
+				return app.listSshConnections();
+			}
+
+			if (pathname === "/v1/ssh/connections" && req.method === "POST") {
+				return app.createSshConnection(req);
+			}
+
+			if (
+				pathname.match(/^\/v1\/ssh\/connections\/[^/]+$/) &&
+				req.method === "DELETE"
+			) {
+				return app.deleteSshConnection(req);
+			}
+
 			// Serve static assets from public/ (Vite build output)
 			const publicDir = new URL("../public/", import.meta.url);
-			if (pathname !== "/" && pathname !== "/ssh" && !pathname.startsWith("/sessions/")) {
+			if (pathname !== "/" && pathname !== "/ssh" && !pathname.startsWith("/ssh/") && !pathname.startsWith("/sessions/")) {
 				const filePath = new URL(`.${pathname}`, publicDir);
 				const file = Bun.file(filePath);
 				if (await file.exists()) {
@@ -217,18 +232,38 @@ export function createServer(deps: ServerDeps): ServerHandle {
 		url: URL,
 		serverInstance: ReturnType<typeof Bun.serve>,
 	): Response | undefined {
-		const sshDestination = url.searchParams.get("ssh_destination");
+		const connectionId = url.searchParams.get("connection_id");
 		const sshPassword = url.searchParams.get("ssh_password");
 		const cols = Number.parseInt(url.searchParams.get("cols") ?? "80", 10);
 		const rows = Number.parseInt(url.searchParams.get("rows") ?? "24", 10);
 
-		if (!sshDestination) {
-			return jsonResponse(400, {
-				error: {
-					code: "invalid_params",
-					message: "ssh_destination is required",
-				},
-			});
+		let sshDestination: string;
+		let tmuxSessionName: string | undefined;
+
+		if (connectionId) {
+			const conn = repository.getSshConnection(connectionId);
+			if (!conn) {
+				return jsonResponse(404, {
+					error: {
+						code: "connection_not_found",
+						message: "SSH connection not found",
+					},
+				});
+			}
+			sshDestination = conn.sshDestination;
+			tmuxSessionName = conn.tmuxSessionName;
+			repository.touchSshConnection(connectionId);
+		} else {
+			const dest = url.searchParams.get("ssh_destination");
+			if (!dest) {
+				return jsonResponse(400, {
+					error: {
+						code: "invalid_params",
+						message: "ssh_destination is required",
+					},
+				});
+			}
+			sshDestination = dest;
 		}
 
 		const upgraded = serverInstance.upgrade(req, {
@@ -238,6 +273,7 @@ export function createServer(deps: ServerDeps): ServerHandle {
 				terminal: null,
 				sshDestination,
 				sshPassword,
+				tmuxSessionName,
 				cols: Number.isNaN(cols) ? 80 : cols,
 				rows: Number.isNaN(rows) ? 24 : rows,
 			} satisfies WsTerminalState,
@@ -253,7 +289,7 @@ export function createServer(deps: ServerDeps): ServerHandle {
 	}
 
 	function handleTerminalOpen(ws: Bun.ServerWebSocket<WsTerminalState>) {
-		const { connectionId, sessionId, cwd, sshDestination, sshPassword, cols, rows } = ws.data;
+		const { connectionId, sessionId, cwd, sshDestination, sshPassword, tmuxSessionName, cols, rows } = ws.data;
 		log.terminal(`connected connection_id=${connectionId} session_id=${sessionId ?? "(direct ssh)"}`);
 
 		if (!terminalService) {
@@ -262,9 +298,13 @@ export function createServer(deps: ServerDeps): ServerHandle {
 			return;
 		}
 
-		const remoteCommand = sessionId && cwd
-			? `cd ${shellEscape(cwd)} && claude -r ${shellEscape(sessionId)}`
-			: undefined;
+		let remoteCommand: string | undefined;
+		if (sessionId && cwd) {
+			remoteCommand = `cd ${shellEscape(cwd)} && claude -r ${shellEscape(sessionId)}`;
+		} else if (tmuxSessionName) {
+			const tmuxCmd = `tmux attach-session -t ${shellEscape(tmuxSessionName)} 2>/dev/null || tmux new-session -s ${shellEscape(tmuxSessionName)}`;
+			remoteCommand = `exec $SHELL -lc ${shellEscape(tmuxCmd)}`;
+		}
 
 		let terminal: ReturnType<TerminalServiceLike["open"]>;
 		try {

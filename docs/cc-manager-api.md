@@ -160,6 +160,88 @@ The `content_blocks` field contains the raw content block array from the JSONL s
 
 ---
 
+### `GET /v1/ssh/connections`
+
+List all SSH connections, ordered by most recent connection first.
+
+**Response `200`**
+
+```jsonc
+{
+  "connections": [
+    {
+      "id": "uuid-1",
+      "ssh_destination": "user@host",
+      "tmux_session_name": "cc-abcd1234",
+      "title": "My Server",
+      "created_at": 1705300000000,       // epoch ms
+      "last_connected_at": 1705300100000
+    }
+  ]
+}
+```
+
+---
+
+### `POST /v1/ssh/connections`
+
+Create a new SSH connection.
+
+**Request body**
+
+```jsonc
+{
+  "ssh_destination": "user@host",  // required
+  "title": "My Server"             // optional, defaults to ssh_destination
+}
+```
+
+**Response `201`**
+
+```jsonc
+{
+  "connection": {
+    "id": "uuid-1",
+    "ssh_destination": "user@host",
+    "tmux_session_name": "cc-abcd1234",
+    "title": "My Server",
+    "created_at": 1705300000000,
+    "last_connected_at": 1705300000000
+  }
+}
+```
+
+**Response `400`** — Missing `ssh_destination`:
+```json
+{ "error": { "code": "invalid_params", "message": "ssh_destination is required" } }
+```
+
+**Response `400`** — Invalid JSON:
+```json
+{ "error": { "code": "invalid_json", "message": "Invalid JSON body" } }
+```
+
+---
+
+### `DELETE /v1/ssh/connections/:id`
+
+Delete an SSH connection.
+
+**Path parameters**
+
+| Name | Type   | Description        |
+| ---- | ------ | ------------------ |
+| `id` | string | Connection ID (UUID) |
+
+**Response `204`** — Successfully deleted (no body).
+
+**Response `404`** — Connection not found:
+```json
+{ "error": { "code": "connection_not_found", "message": "SSH connection not found" } }
+```
+
+---
+
 ### Static file serving
 
 Any path not matching the API routes above is resolved against `public/` (the Vite build output directory).
@@ -345,6 +427,7 @@ Sent for any error condition (validation failures, prompt errors, etc.).
 | `prompt_failed`    | Claude SDK streaming error                     |
 | `repo_not_found`   | Repository ID not found in database            |
 | `git_error`        | Git operation failed (clone, worktree, etc.)   |
+| `connection_not_found` | SSH connection ID not found in database    |
 
 #### `pong`
 
@@ -617,19 +700,28 @@ If the WebSocket upgrade fails at the HTTP level, the server returns a JSON erro
 
 **Endpoint:** `ws://{host}:{port}/v1/ssh?ssh_destination=user@host&cols=80&rows=24`
 
-Opens a direct SSH terminal session — no Claude session required. Connects to the remote host and opens a login shell. This is separate from `/v1/terminal` which requires a session ID and runs `claude -r` on the remote.
+Opens a direct SSH terminal session — no Claude session required. Connects to the remote host. This is separate from `/v1/terminal` which requires a session ID and runs `claude -r` on the remote.
 
 ### Query parameters
 
 | Name              | Type   | Required | Default | Description                        |
 | ----------------- | ------ | -------- | ------- | ---------------------------------- |
-| `ssh_destination` | string | yes      |         | SSH destination (e.g. `user@host`) |
+| `connection_id`   | string | no       |         | SSH connection ID (from `/v1/ssh/connections`). When provided, `ssh_destination` is looked up from the DB and a tmux session is used for persistence. |
+| `ssh_destination` | string | cond.    |         | SSH destination (e.g. `user@host`). Required when `connection_id` is not provided. |
 | `ssh_password`    | string | no       |         | SSH password for auto-login        |
 | `cols`            | number | no       | `80`    | Initial terminal columns           |
 | `rows`            | number | no       | `24`    | Initial terminal rows              |
 
 ### Connection flow
 
+**With `connection_id`:**
+1. Server looks up the SSH connection in the database (404 if not found)
+2. Server updates `last_connected_at` timestamp
+3. Server spawns `ssh -t <destination> "tmux attach-session -t <name> || tmux new-session -s <name>"`
+4. WebSocket upgrades; raw terminal data flows bidirectionally
+5. On disconnect, the local SSH process is killed, tmux auto-detaches, and the remote session persists
+
+**Without `connection_id` (backward compatible):**
 1. Server validates `ssh_destination` is present
 2. Server spawns `ssh -t <destination>` (login shell, no remote command)
 3. WebSocket upgrades; raw terminal data flows bidirectionally
@@ -660,9 +752,14 @@ Same format as `/v1/terminal`:
 
 ### Error responses
 
-**`400`** — Missing `ssh_destination`:
+**`400`** — Missing `ssh_destination` (when `connection_id` not provided):
 ```json
 { "error": { "code": "invalid_params", "message": "ssh_destination is required" } }
+```
+
+**`404`** — Connection not found (when `connection_id` is provided):
+```json
+{ "error": { "code": "connection_not_found", "message": "SSH connection not found" } }
 ```
 
 **`400`** — WebSocket upgrade failed:
@@ -723,6 +820,19 @@ Session identity is a composite key of `(session_id, encoded_cwd)`. The `encoded
 | `default_branch`  | TEXT    | Default branch name                  |
 | `created_at`      | INTEGER | Creation timestamp (epoch ms)        |
 | `last_fetched_at` | INTEGER | Last fetch timestamp (epoch ms)      |
+
+### `ssh_connections`
+
+| Column              | Type    | Description                          |
+| ------------------- | ------- | ------------------------------------ |
+| `id`                | TEXT PK | Connection identifier (UUID)         |
+| `ssh_destination`   | TEXT    | SSH destination (e.g. `user@host`)   |
+| `tmux_session_name` | TEXT    | tmux session name (unique, `cc-<8chars>`) |
+| `title`             | TEXT    | Display title (defaults to destination) |
+| `created_at`        | INTEGER | Creation timestamp (epoch ms)        |
+| `last_connected_at` | INTEGER | Last connection timestamp (epoch ms) |
+
+Each SSH connection gets a persistent tmux session on the remote host. When the browser disconnects, tmux auto-detaches and the remote session stays alive. Reconnecting reattaches to the same tmux session with full terminal state preserved.
 
 ### `session_events`
 

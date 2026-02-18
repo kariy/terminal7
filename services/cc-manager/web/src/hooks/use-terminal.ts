@@ -19,7 +19,13 @@ interface PendingSshConnection {
   sshPassword?: string;
 }
 
-type PendingConnection = PendingSessionConnection | PendingSshConnection;
+interface PendingSshConnectionById {
+  kind: "ssh-connection";
+  connectionId: string;
+  sshPassword?: string;
+}
+
+type PendingConnection = PendingSessionConnection | PendingSshConnection | PendingSshConnectionById;
 
 export function useTerminal() {
   const [status, setStatus] = useState<TerminalStatus>("idle");
@@ -89,6 +95,16 @@ export function useTerminal() {
           params.set("ssh_password", pending.sshPassword);
         }
         endpoint = `${proto}//${location.host}/v1/terminal?${params}`;
+      } else if (pending.kind === "ssh-connection") {
+        const params = new URLSearchParams({
+          connection_id: pending.connectionId,
+          cols: String(cols),
+          rows: String(rows),
+        });
+        if (pending.sshPassword) {
+          params.set("ssh_password", pending.sshPassword);
+        }
+        endpoint = `${proto}//${location.host}/v1/ssh?${params}`;
       } else {
         const params = new URLSearchParams({
           ssh_destination: pending.sshDestination,
@@ -189,6 +205,20 @@ export function useTerminal() {
     [cleanup, connect],
   );
 
+  const openSshConnection = useCallback(
+    (connectionId: string, sshPassword?: string) => {
+      cleanup();
+      setStatus("connecting");
+      const pending: PendingSshConnectionById = { kind: "ssh-connection", connectionId, sshPassword };
+      pendingRef.current = pending;
+
+      if (containerRef.current) {
+        connect(containerRef.current, pending);
+      }
+    },
+    [cleanup, connect],
+  );
+
   // After render: if there's a pending connection and the container is now available, connect.
   useEffect(() => {
     if (pendingRef.current && containerRef.current && !termRef.current) {
@@ -207,5 +237,5 @@ export function useTerminal() {
     };
   }, [cleanup]);
 
-  return { status, open, openSsh, close, containerRef };
+  return { status, open, openSsh, openSshConnection, close, containerRef };
 }
