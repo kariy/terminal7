@@ -15,10 +15,17 @@
     "ios:build-install": "bash scripts/ios-build-install.sh",
     "dev:web-ui": "cd services/cc-manager/web && bunx --bun vite",
     "build:web-ui": "cd services/cc-manager/web && bunx --bun vite build",
-    "manager:clean": "rm -f ${CC_MANAGER_DB_PATH:-$HOME/.cc-manager/manager.db} && echo 'Database removed.'"
+    "manager:clean": "rm -f ${CC_MANAGER_DB_PATH:-$HOME/.cc-manager/manager.db} && echo 'Database removed.'",
+    "lint": "eslint . && cd services/cc-manager/web && bunx eslint .",
+    "lint:backend": "eslint .",
+    "lint:web": "cd services/cc-manager/web && bunx eslint ."
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@eslint/js": "^10.0.1",
+    "@types/bun": "latest",
+    "eslint": "^10.0.0",
+    "globals": "^17.3.0",
+    "typescript-eslint": "^8.56.0"
   },
   "peerDependencies": {
     "typescript": "^5"
