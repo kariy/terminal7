@@ -199,3 +199,107 @@ describe("terminal WS", () => {
 		expect(openCall.sshDestination).toBe("admin@192.168.1.1");
 	});
 });
+
+describe("direct SSH WS (/v1/ssh)", () => {
+	let ctx: TestContext;
+	let ws: RawWsTestClient;
+
+	beforeEach(() => {
+		ctx = createTestServer({
+			withTerminalService: true,
+		});
+	});
+
+	afterEach(() => {
+		ws?.close();
+		destroyTestServer(ctx);
+	});
+
+	function sshUrl(params?: Record<string, string>): string {
+		const defaults = {
+			ssh_destination: "user@host",
+			cols: "80",
+			rows: "24",
+		};
+		const merged = { ...defaults, ...params };
+		const qs = new URLSearchParams(merged).toString();
+		return `ws://127.0.0.1:${ctx.handle.server.port}/v1/ssh?${qs}`;
+	}
+
+	test("returns 400 when ssh_destination is missing", async () => {
+		const res = await fetch(
+			`${ctx.baseUrl}/v1/ssh?cols=80&rows=24`,
+		);
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.error.code).toBe("invalid_params");
+	});
+
+	test("happy path: connect, receive output, send input", async () => {
+		ws = new RawWsTestClient(sshUrl());
+		await ws.connected();
+
+		// Mock terminal should have been opened
+		const handle = ctx.terminalService!.getLastHandle();
+		expect(handle).not.toBeNull();
+		expect(handle!.closed).toBe(false);
+
+		// Verify no remoteCommand (login shell)
+		const openCall = ctx.terminalService!.openCalls[0];
+		expect(openCall.sshDestination).toBe("user@host");
+		expect(openCall.remoteCommand).toBeUndefined();
+		expect(openCall.cols).toBe(80);
+		expect(openCall.rows).toBe(24);
+
+		// Simulate output from the PTY
+		handle!.simulateOutput("Welcome to SSH\r\n");
+		const msg = await ws.nextMessage();
+		const text = typeof msg === "string" ? msg : new TextDecoder().decode(msg as ArrayBuffer);
+		expect(text).toBe("Welcome to SSH\r\n");
+
+		// Send raw input from the client
+		ws.send("whoami\r");
+
+		await new Promise((r) => setTimeout(r, 50));
+
+		expect(handle!.written.length).toBeGreaterThan(0);
+		const written = Buffer.concat(handle!.written).toString();
+		expect(written).toContain("whoami\r");
+	});
+
+	test("resize control message works", async () => {
+		ws = new RawWsTestClient(sshUrl());
+		await ws.connected();
+
+		const handle = ctx.terminalService!.getLastHandle()!;
+
+		ws.send(JSON.stringify({ type: "resize", cols: 100, rows: 50 }));
+
+		await new Promise((r) => setTimeout(r, 50));
+
+		expect(handle.resizes).toEqual([{ cols: 100, rows: 50 }]);
+		expect(handle.written.length).toBe(0);
+	});
+
+	test("WS disconnect kills the PTY", async () => {
+		ws = new RawWsTestClient(sshUrl());
+		await ws.connected();
+
+		const handle = ctx.terminalService!.getLastHandle()!;
+		expect(handle.closed).toBe(false);
+
+		ws.close();
+
+		await new Promise((r) => setTimeout(r, 100));
+
+		expect(handle.closed).toBe(true);
+	});
+
+	test("passes ssh_password to terminal service", async () => {
+		ws = new RawWsTestClient(sshUrl({ ssh_password: "secret123" }));
+		await ws.connected();
+
+		const openCall = ctx.terminalService!.openCalls[0];
+		expect(openCall.sshPassword).toBe("secret123");
+	});
+});

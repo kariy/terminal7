@@ -6,18 +6,19 @@ import type { SDKMessage } from "@/types/sdk-messages";
 import type { SessionListItem, HistoryMessage } from "@/types/api";
 import { fetchSessions, fetchHistory } from "@/lib/api";
 import { getSshDestination, setSshDestination, getSshPassword, setSshPassword } from "@/lib/settings";
-import { Header } from "@/components/layout/Header";
+import { Header, type HeaderTab } from "@/components/layout/Header";
 import { SshDestinationDialog } from "@/components/SshDestinationDialog";
 import { RepoSelectionDialog, type RepoSelection } from "@/components/RepoSelectionDialog";
 import { ConnectingView } from "@/components/views/ConnectingView";
 import { SessionsView } from "@/components/views/SessionsView";
 import { ChatView } from "@/components/views/ChatView";
 import { TerminalView } from "@/components/views/TerminalView";
+import { SshView } from "@/components/views/SshView";
 import type { ChatMessage, ContentBlockState } from "@/types/chat";
 
 // ── State ──
 
-type View = "connecting" | "sessions" | "chat" | "terminal";
+type View = "connecting" | "sessions" | "ssh" | "chat" | "terminal";
 
 interface AppState {
   view: View;
@@ -27,6 +28,7 @@ interface AppState {
   activeSessionMeta: WsSessionMeta | null;
   messages: ChatMessage[];
   activeRequestIds: Set<string>;
+  terminalOrigin: "sessions" | "ssh";
 }
 
 const initialState: AppState = {
@@ -37,6 +39,7 @@ const initialState: AppState = {
   activeSessionMeta: null,
   messages: [],
   activeRequestIds: new Set(),
+  terminalOrigin: "sessions",
 };
 
 // ── Actions ──
@@ -66,6 +69,7 @@ type Action =
   | { type: "ERROR"; requestId?: string; message: string }
   | { type: "SET_SESSION_META"; meta: WsSessionMeta }
   | { type: "OPEN_TERMINAL"; sessionId: string; encodedCwd: string }
+  | { type: "OPEN_SSH_TERMINAL" }
   | { type: "CLOSE_TERMINAL" };
 
 function reducer(state: AppState, action: Action): AppState {
@@ -318,12 +322,20 @@ function reducer(state: AppState, action: Action): AppState {
         view: "terminal",
         activeSessionId: action.sessionId,
         activeEncodedCwd: action.encodedCwd,
+        terminalOrigin: "sessions",
+      };
+
+    case "OPEN_SSH_TERMINAL":
+      return {
+        ...state,
+        view: "terminal",
+        terminalOrigin: "ssh",
       };
 
     case "CLOSE_TERMINAL":
       return {
         ...state,
-        view: "sessions",
+        view: state.terminalOrigin,
       };
 
     default:
@@ -334,9 +346,12 @@ function reducer(state: AppState, action: Action): AppState {
 // ── Routing helpers ──
 
 function getRouteFromPath(): {
-  view: "sessions" | "chat";
+  view: "sessions" | "ssh" | "chat";
   sessionId: string | null;
 } {
+  if (window.location.pathname === "/ssh") {
+    return { view: "ssh", sessionId: null };
+  }
   const match = window.location.pathname.match(/^\/sessions\/([^/]+)$/);
   if (match) {
     return { view: "chat", sessionId: decodeURIComponent(match[1]) };
@@ -496,6 +511,8 @@ export default function App() {
                     },
                   );
                 }
+              } else if (route.view === "ssh") {
+                dispatch({ type: "SET_VIEW", view: "ssh" });
               } else {
                 dispatch({ type: "SET_VIEW", view: "sessions" });
               }
@@ -653,6 +670,8 @@ export default function App() {
             });
           });
         }
+      } else if (route.view === "ssh") {
+        dispatch({ type: "SET_VIEW", view: "ssh" });
       } else {
         dispatch({ type: "RETURN_TO_SESSIONS" });
       }
@@ -799,15 +818,46 @@ export default function App() {
     setShowSshDialog(true);
   }, []);
 
+  const handleConnectSsh = useCallback(
+    (destination: string, password?: string) => {
+      dispatch({ type: "OPEN_SSH_TERMINAL" });
+      terminal.openSsh(destination, password);
+    },
+    [terminal],
+  );
+
+  const handleTabChange = useCallback(
+    (tab: HeaderTab) => {
+      if (tab === "sessions") {
+        dispatch({ type: "SET_VIEW", view: "sessions" });
+        pushUrl("/");
+        fetchSessions(false)
+          .then((data) =>
+            dispatch({ type: "SET_SESSIONS", sessions: data.sessions }),
+          )
+          .catch(() => {});
+      } else {
+        dispatch({ type: "SET_VIEW", view: "ssh" });
+        pushUrl("/ssh");
+      }
+    },
+    [],
+  );
+
   const handleCloseTerminal = useCallback(() => {
+    const origin = stateRef.current.terminalOrigin;
     terminal.close();
     dispatch({ type: "CLOSE_TERMINAL" });
-    pushUrl("/");
-    fetchSessions(false)
-      .then((data) =>
-        dispatch({ type: "SET_SESSIONS", sessions: data.sessions }),
-      )
-      .catch(() => {});
+    if (origin === "ssh") {
+      pushUrl("/ssh");
+    } else {
+      pushUrl("/");
+      fetchSessions(false)
+        .then((data) =>
+          dispatch({ type: "SET_SESSIONS", sessions: data.sessions }),
+        )
+        .catch(() => {});
+    }
   }, [terminal]);
 
   const handleDisconnect = useCallback(() => {
@@ -833,10 +883,14 @@ export default function App() {
       headerTitle = "New Session";
     }
   } else if (state.view === "terminal") {
-    const s = state.sessions.find(
-      (s) => s.session_id === state.activeSessionId,
-    );
-    headerTitle = s?.title || "Terminal";
+    if (state.terminalOrigin === "ssh") {
+      headerTitle = "SSH Terminal";
+    } else {
+      const s = state.sessions.find(
+        (s) => s.session_id === state.activeSessionId,
+      );
+      headerTitle = s?.title || "Terminal";
+    }
   }
 
   return (
@@ -846,9 +900,11 @@ export default function App() {
         status={status}
         showBack={state.view === "chat" || state.view === "terminal"}
         totalCostUsd={headerCost}
+        activeTab={(state.view === "sessions" || state.view === "ssh") ? state.view as HeaderTab : undefined}
+        onTabChange={handleTabChange}
         onBack={state.view === "terminal" ? handleCloseTerminal : handleReturnToSessions}
         onDisconnect={handleDisconnect}
-        onSettings={state.view === "sessions" ? handleOpenSettings : undefined}
+        onSettings={(state.view === "sessions" || state.view === "ssh") ? handleOpenSettings : undefined}
       />
       {state.view === "connecting" && <ConnectingView />}
       {state.view === "sessions" && (
@@ -859,6 +915,9 @@ export default function App() {
           onNewSession={handleNewSession}
           onOpenTerminal={handleOpenTerminal}
         />
+      )}
+      {state.view === "ssh" && (
+        <SshView onConnect={handleConnectSsh} />
       )}
       {state.view === "chat" && (
         <ChatView

@@ -7,11 +7,15 @@ function formatCost(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
+export type HeaderTab = "sessions" | "ssh";
+
 interface HeaderProps {
   title: string;
   status: WsStatus;
   showBack: boolean;
   totalCostUsd?: number;
+  activeTab?: HeaderTab;
+  onTabChange?: (tab: HeaderTab) => void;
   onBack: () => void;
   onDisconnect: () => void;
   onSettings?: () => void;
@@ -22,6 +26,8 @@ export function Header({
   status,
   showBack,
   totalCostUsd,
+  activeTab,
+  onTabChange,
   onBack,
   onDisconnect,
   onSettings,
@@ -32,6 +38,8 @@ export function Header({
       : status === "connecting"
         ? "Connecting..."
         : "Disconnected";
+
+  const showTabs = !showBack && status === "connected" && activeTab && onTabChange;
 
   return (
     <header className="flex items-center gap-2.5 px-4 py-3 border-b border-border shrink-0 bg-background">
@@ -46,7 +54,25 @@ export function Header({
         </Button>
       )}
       <div className="flex-1 min-w-0">
-        <div className="text-base font-semibold truncate">{title}</div>
+        {showTabs ? (
+          <div className="flex items-center gap-1">
+            {(["sessions", "ssh"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => onTabChange(tab)}
+                className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
+                  activeTab === tab
+                    ? "bg-secondary text-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"
+                }`}
+              >
+                {tab === "sessions" ? "Sessions" : "SSH"}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="text-base font-semibold truncate">{title}</div>
+        )}
         <div
           className={`text-xs ${status === "connected" ? "text-foreground/60" : "text-muted-foreground"}`}
         >

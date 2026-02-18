@@ -9,7 +9,7 @@ export interface TerminalHandle {
 export interface TerminalOpenParams {
 	sshDestination: string;
 	sshPassword?: string;
-	remoteCommand: string;
+	remoteCommand?: string;
 	cols: number;
 	rows: number;
 	onData: (data: Buffer) => void;
@@ -74,14 +74,15 @@ export class TerminalService implements TerminalServiceLike {
 	open(params: TerminalOpenParams): TerminalHandle {
 		const { sshDestination, sshPassword, remoteCommand, cols, rows, onData, onExit } = params;
 
-		const sizeSetup = `stty rows ${rows} cols ${cols} 2>/dev/null;`;
-		const fullCommand = `${sizeSetup} ${remoteCommand}`;
-
-		const sshArgs = ["ssh", "-t", "-o", "StrictHostKeyChecking=accept-new", sshDestination, fullCommand];
+		const sshArgs = ["ssh", "-t", "-o", "StrictHostKeyChecking=accept-new", sshDestination];
+		if (remoteCommand) {
+			const sizeSetup = `stty rows ${rows} cols ${cols} 2>/dev/null;`;
+			sshArgs.push(`${sizeSetup} ${remoteCommand}`);
+		}
 		const args = ["python3", "-c", PTY_HELPER_SCRIPT, ...sshArgs];
 
 		log.terminal(`spawning ssh to ${sshDestination} cols=${cols} rows=${rows} password=${sshPassword ? "yes" : "no"}`);
-		log.terminal(`remote command: ${remoteCommand}`);
+		log.terminal(`remote command: ${remoteCommand ?? "(login shell)"}`);
 
 		const env = { ...process.env, TERM: "xterm-256color" };
 		if (sshPassword) {

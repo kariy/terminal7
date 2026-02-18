@@ -200,9 +200,9 @@ export interface WsTerminalState {
 	kind: "terminal";
 	connectionId: string;
 	terminal: TerminalHandle | null;
-	sessionId: string;
-	encodedCwd: string;
-	cwd: string;
+	sessionId?: string;
+	encodedCwd?: string;
+	cwd?: string;
 	sshDestination: string;
 	sshPassword: string | null;
 	cols: number;

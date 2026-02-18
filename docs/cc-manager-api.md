@@ -164,7 +164,7 @@ The `content_blocks` field contains the raw content block array from the JSONL s
 
 Any path not matching the API routes above is resolved against `public/` (the Vite build output directory).
 
-- `GET /` and `GET /sessions/*` — Returns `public/index.html` (SPA fallback).
+- `GET /`, `GET /ssh`, and `GET /sessions/*` — Returns `public/index.html` (SPA fallback).
 - All other paths — Serves the matching file from `public/`, or returns `404`:
 
 ```json
@@ -604,6 +604,65 @@ If the WebSocket upgrade fails at the HTTP level, the server returns a JSON erro
 **`404`** — Session not found:
 ```json
 { "error": { "code": "session_not_found", "message": "Session not found" } }
+```
+
+**`400`** — WebSocket upgrade failed:
+```json
+{ "error": { "code": "upgrade_failed", "message": "WebSocket upgrade failed" } }
+```
+
+---
+
+## Direct SSH WebSocket API
+
+**Endpoint:** `ws://{host}:{port}/v1/ssh?ssh_destination=user@host&cols=80&rows=24`
+
+Opens a direct SSH terminal session — no Claude session required. Connects to the remote host and opens a login shell. This is separate from `/v1/terminal` which requires a session ID and runs `claude -r` on the remote.
+
+### Query parameters
+
+| Name              | Type   | Required | Default | Description                        |
+| ----------------- | ------ | -------- | ------- | ---------------------------------- |
+| `ssh_destination` | string | yes      |         | SSH destination (e.g. `user@host`) |
+| `ssh_password`    | string | no       |         | SSH password for auto-login        |
+| `cols`            | number | no       | `80`    | Initial terminal columns           |
+| `rows`            | number | no       | `24`    | Initial terminal rows              |
+
+### Connection flow
+
+1. Server validates `ssh_destination` is present
+2. Server spawns `ssh -t <destination>` (login shell, no remote command)
+3. WebSocket upgrades; raw terminal data flows bidirectionally
+
+### Data flow
+
+Same as `/v1/terminal` — raw text frames, no JSON wrapping.
+
+- **Server → Client:** Raw terminal output bytes from the PTY
+- **Client → Server:** Raw keystrokes
+
+### Resize control message
+
+Same format as `/v1/terminal`:
+
+```json
+{
+  "type": "resize",
+  "cols": 120,
+  "rows": 40
+}
+```
+
+### Connection close
+
+- **PTY exits** → server closes the WebSocket with code `1000`
+- **Client closes WebSocket** → server kills the PTY process
+
+### Error responses
+
+**`400`** — Missing `ssh_destination`:
+```json
+{ "error": { "code": "invalid_params", "message": "ssh_destination is required" } }
 ```
 
 **`400`** — WebSocket upgrade failed:

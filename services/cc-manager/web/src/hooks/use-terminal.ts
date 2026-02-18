@@ -5,12 +5,21 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 
 export type TerminalStatus = "idle" | "connecting" | "connected" | "closed";
 
-interface PendingConnection {
+interface PendingSessionConnection {
+  kind: "session";
   sessionId: string;
   encodedCwd: string;
   sshDestination: string;
   sshPassword?: string;
 }
+
+interface PendingSshConnection {
+  kind: "ssh";
+  sshDestination: string;
+  sshPassword?: string;
+}
+
+type PendingConnection = PendingSessionConnection | PendingSshConnection;
 
 export function useTerminal() {
   const [status, setStatus] = useState<TerminalStatus>("idle");
@@ -39,7 +48,6 @@ export function useTerminal() {
 
   const connect = useCallback(
     (container: HTMLDivElement, pending: PendingConnection) => {
-      const { sessionId, encodedCwd, sshDestination, sshPassword } = pending;
       pendingRef.current = null;
 
       const term = new Terminal({
@@ -68,17 +76,31 @@ export function useTerminal() {
       const rows = term.rows;
 
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      const params = new URLSearchParams({
-        session_id: sessionId,
-        encoded_cwd: encodedCwd,
-        ssh_destination: sshDestination,
-        cols: String(cols),
-        rows: String(rows),
-      });
-      if (sshPassword) {
-        params.set("ssh_password", sshPassword);
+      let endpoint: string;
+      if (pending.kind === "session") {
+        const params = new URLSearchParams({
+          session_id: pending.sessionId,
+          encoded_cwd: pending.encodedCwd,
+          ssh_destination: pending.sshDestination,
+          cols: String(cols),
+          rows: String(rows),
+        });
+        if (pending.sshPassword) {
+          params.set("ssh_password", pending.sshPassword);
+        }
+        endpoint = `${proto}//${location.host}/v1/terminal?${params}`;
+      } else {
+        const params = new URLSearchParams({
+          ssh_destination: pending.sshDestination,
+          cols: String(cols),
+          rows: String(rows),
+        });
+        if (pending.sshPassword) {
+          params.set("ssh_password", pending.sshPassword);
+        }
+        endpoint = `${proto}//${location.host}/v1/ssh?${params}`;
       }
-      const ws = new WebSocket(`${proto}//${location.host}/v1/terminal?${params}`);
+      const ws = new WebSocket(endpoint);
       wsRef.current = ws;
 
       ws.binaryType = "arraybuffer";
@@ -143,12 +165,25 @@ export function useTerminal() {
     (sessionId: string, encodedCwd: string, sshDestination: string, sshPassword?: string) => {
       cleanup();
       setStatus("connecting");
-      pendingRef.current = { sessionId, encodedCwd, sshDestination, sshPassword };
+      const pending: PendingSessionConnection = { kind: "session", sessionId, encodedCwd, sshDestination, sshPassword };
+      pendingRef.current = pending;
 
-      // If the container is already mounted, connect immediately.
-      // Otherwise, the effect below will pick it up after render.
       if (containerRef.current) {
-        connect(containerRef.current, { sessionId, encodedCwd, sshDestination, sshPassword });
+        connect(containerRef.current, pending);
+      }
+    },
+    [cleanup, connect],
+  );
+
+  const openSsh = useCallback(
+    (sshDestination: string, sshPassword?: string) => {
+      cleanup();
+      setStatus("connecting");
+      const pending: PendingSshConnection = { kind: "ssh", sshDestination, sshPassword };
+      pendingRef.current = pending;
+
+      if (containerRef.current) {
+        connect(containerRef.current, pending);
       }
     },
     [cleanup, connect],
@@ -172,5 +207,5 @@ export function useTerminal() {
     };
   }, [cleanup]);
 
-  return { status, open, close, containerRef };
+  return { status, open, openSsh, close, containerRef };
 }

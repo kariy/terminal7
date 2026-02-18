@@ -102,6 +102,10 @@ export function createServer(deps: ServerDeps): ServerHandle {
 				return handleTerminalUpgrade(req, url, serverInstance);
 			}
 
+			if (pathname === "/v1/ssh") {
+				return handleSshUpgrade(req, url, serverInstance);
+			}
+
 			if (pathname === "/health") {
 				return jsonResponse(200, {
 					status: "ok",
@@ -126,7 +130,7 @@ export function createServer(deps: ServerDeps): ServerHandle {
 
 			// Serve static assets from public/ (Vite build output)
 			const publicDir = new URL("../public/", import.meta.url);
-			if (pathname !== "/" && !pathname.startsWith("/sessions/")) {
+			if (pathname !== "/" && pathname !== "/ssh" && !pathname.startsWith("/sessions/")) {
 				const filePath = new URL(`.${pathname}`, publicDir);
 				const file = Bun.file(filePath);
 				if (await file.exists()) {
@@ -135,7 +139,7 @@ export function createServer(deps: ServerDeps): ServerHandle {
 				return notFound();
 			}
 
-			// SPA fallback: serve index.html for / and /sessions/*
+			// SPA fallback: serve index.html for /, /ssh, and /sessions/*
 			return new Response(
 				Bun.file(new URL("../public/index.html", import.meta.url)),
 			);
@@ -208,9 +212,49 @@ export function createServer(deps: ServerDeps): ServerHandle {
 		});
 	}
 
+	function handleSshUpgrade(
+		req: Request,
+		url: URL,
+		serverInstance: ReturnType<typeof Bun.serve>,
+	): Response | undefined {
+		const sshDestination = url.searchParams.get("ssh_destination");
+		const sshPassword = url.searchParams.get("ssh_password");
+		const cols = Number.parseInt(url.searchParams.get("cols") ?? "80", 10);
+		const rows = Number.parseInt(url.searchParams.get("rows") ?? "24", 10);
+
+		if (!sshDestination) {
+			return jsonResponse(400, {
+				error: {
+					code: "invalid_params",
+					message: "ssh_destination is required",
+				},
+			});
+		}
+
+		const upgraded = serverInstance.upgrade(req, {
+			data: {
+				kind: "terminal",
+				connectionId: crypto.randomUUID(),
+				terminal: null,
+				sshDestination,
+				sshPassword,
+				cols: Number.isNaN(cols) ? 80 : cols,
+				rows: Number.isNaN(rows) ? 24 : rows,
+			} satisfies WsTerminalState,
+		});
+
+		if (upgraded) return;
+		return jsonResponse(400, {
+			error: {
+				code: "upgrade_failed",
+				message: "WebSocket upgrade failed",
+			},
+		});
+	}
+
 	function handleTerminalOpen(ws: Bun.ServerWebSocket<WsTerminalState>) {
 		const { connectionId, sessionId, cwd, sshDestination, sshPassword, cols, rows } = ws.data;
-		log.terminal(`connected connection_id=${connectionId} session_id=${sessionId}`);
+		log.terminal(`connected connection_id=${connectionId} session_id=${sessionId ?? "(direct ssh)"}`);
 
 		if (!terminalService) {
 			ws.send("\r\n[Terminal not available]\r\n");
@@ -218,7 +262,9 @@ export function createServer(deps: ServerDeps): ServerHandle {
 			return;
 		}
 
-		const remoteCommand = `cd ${shellEscape(cwd)} && claude -r ${shellEscape(sessionId)}`;
+		const remoteCommand = sessionId && cwd
+			? `cd ${shellEscape(cwd)} && claude -r ${shellEscape(sessionId)}`
+			: undefined;
 
 		let terminal: ReturnType<TerminalServiceLike["open"]>;
 		try {
