@@ -1,5 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ExternalLink } from "lucide-react";
 import { CodeBlock } from "./CodeBlock";
 
 interface TextBlockProps {
@@ -72,15 +73,20 @@ export function TextBlock({ text, isStreaming }: TextBlockProps) {
               </blockquote>
             );
           },
-          a({ href, children }) {
+          a({ href }) {
+            const label = formatLinkLabel(href);
             return (
               <a
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-primary underline underline-offset-2"
+                className="text-primary underline underline-offset-2 break-all transition-colors hover:text-primary/80"
               >
-                {children}
+                <ExternalLink
+                  className="inline-block w-3 h-3 mr-1 align-[-0.125em]"
+                  aria-hidden="true"
+                />
+                {label}
               </a>
             );
           },
@@ -115,6 +121,68 @@ export function TextBlock({ text, isStreaming }: TextBlockProps) {
       {isStreaming && <StreamingCursor />}
     </div>
   );
+}
+
+const GITHUB_NON_REPO_PATH_PREFIXES = new Set([
+  "about",
+  "account",
+  "collections",
+  "contact",
+  "events",
+  "explore",
+  "features",
+  "issues",
+  "login",
+  "logout",
+  "marketplace",
+  "new",
+  "notifications",
+  "orgs",
+  "pricing",
+  "pulls",
+  "search",
+  "settings",
+  "site",
+  "sponsors",
+  "topics",
+  "users",
+]);
+
+function formatLinkLabel(href: string | undefined): string {
+  if (!href) return "";
+  const githubRepoLabel = getGitHubRepoLabel(href);
+  return githubRepoLabel ?? href;
+}
+
+function getGitHubRepoLabel(href: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(href);
+  } catch {
+    return null;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname !== "github.com" && hostname !== "www.github.com") {
+    return null;
+  }
+
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  if (segments.length < 2) {
+    return null;
+  }
+
+  const owner = segments[0];
+  const repo = segments[1].replace(/\.git$/i, "");
+  if (!owner || !repo) {
+    return null;
+  }
+
+  if (GITHUB_NON_REPO_PATH_PREFIXES.has(owner.toLowerCase())) {
+    return null;
+  }
+
+  return `${owner}/${repo}`;
 }
 
 function StreamingCursor() {
