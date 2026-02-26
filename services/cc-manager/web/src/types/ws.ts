@@ -85,6 +85,22 @@ export interface WsRepoListMessage {
   repositories: WsRepoListItem[];
 }
 
+export interface WsFileSearchEntry {
+  path: string;
+  kind: "file" | "dir";
+}
+
+export interface WsFileSearchResultMessage {
+  type: "file.search.result";
+  request_id?: string;
+  session_id: string;
+  encoded_cwd: string;
+  query: string;
+  entries: WsFileSearchEntry[];
+  indexing: boolean;
+  truncated?: boolean;
+}
+
 export type WsServerMessage =
   | WsHelloMessage
   | WsSessionCreatedMessage
@@ -93,7 +109,8 @@ export type WsServerMessage =
   | WsStreamDoneMessage
   | WsErrorMessage
   | WsPongMessage
-  | WsRepoListMessage;
+  | WsRepoListMessage
+  | WsFileSearchResultMessage;
 
 // Client → Server messages
 
@@ -133,10 +150,20 @@ export interface WsRepoListRequestMessage {
   type: "repo.list";
 }
 
+export interface WsFileSearchMessage {
+  type: "file.search";
+  request_id?: string;
+  session_id: string;
+  encoded_cwd: string;
+  query: string;
+  limit?: number;
+}
+
 export type WsClientMessage =
   | WsSessionCreateMessage
   | WsSessionSendMessage
   | WsSessionStopMessage
   | WsRefreshIndexMessage
   | WsPingMessage
-  | WsRepoListRequestMessage;
+  | WsRepoListRequestMessage
+  | WsFileSearchMessage;

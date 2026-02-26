@@ -1,5 +1,6 @@
 import type { ClaudeServiceLike } from "./claude-service";
 import type { ManagerConfig } from "./config";
+import type { FileIndexServiceLike } from "./file-index-service";
 import type { GitServiceLike } from "./git-service";
 import { jsonResponse } from "./http-utils";
 import type { ManagerRepository } from "./repository";
@@ -12,6 +13,7 @@ export class App {
 	readonly config: ManagerConfig;
 	readonly indexer?: IndexerLike;
 	readonly gitService?: GitServiceLike;
+	readonly fileIndexService?: FileIndexServiceLike;
 
 	constructor(deps: {
 		repository: ManagerRepository;
@@ -19,12 +21,14 @@ export class App {
 		config: ManagerConfig;
 		indexer?: IndexerLike;
 		gitService?: GitServiceLike;
+		fileIndexService?: FileIndexServiceLike;
 	}) {
 		this.repository = deps.repository;
 		this.claudeService = deps.claudeService;
 		this.config = deps.config;
 		this.indexer = deps.indexer;
 		this.gitService = deps.gitService;
+		this.fileIndexService = deps.fileIndexService;
 	}
 
 	listSessions(req: Request): Response {

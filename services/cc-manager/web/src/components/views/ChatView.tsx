@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { TypingIndicator } from "@/components/chat/TypingIndicator";
-import { ChatInput } from "@/components/chat/ChatInput";
+import { ChatInput, type FileSuggestion } from "@/components/chat/ChatInput";
 import type { ChatMessage } from "@/types/chat";
 
 interface Turn {
@@ -34,31 +34,37 @@ interface ChatViewProps {
   messages: ChatMessage[];
   activeRequestIds: Set<string>;
   onSend: (text: string) => void;
+  onFileSearch: (query: string | null) => void;
+  fileSuggestions: FileSuggestion[];
+  fileIndexing: boolean;
 }
 
 export function ChatView({
   messages,
   activeRequestIds,
   onSend,
+  onFileSearch,
+  fileSuggestions,
+  fileIndexing,
 }: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) {
-      requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight;
-      });
-    }
-  }, [messages]);
+    if (!el) return;
+    const frame = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [messages, activeRequestIds]);
 
   const isStreaming = activeRequestIds.size > 0;
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
       <ScrollArea
         ref={scrollRef}
-        className="flex-1 p-4 flex flex-col gap-2.5"
+        className="flex-1 min-h-0 p-4"
       >
         <div className="flex flex-col gap-2.5">
           {groupIntoTurns(messages).map((turn, i) => {
@@ -94,7 +100,13 @@ export function ChatView({
           })}
         </div>
       </ScrollArea>
-      <ChatInput onSend={onSend} disabled={isStreaming} />
+      <ChatInput
+        onSend={onSend}
+        onFileSearch={onFileSearch}
+        fileSuggestions={fileSuggestions}
+        fileIndexing={fileIndexing}
+        disabled={isStreaming}
+      />
     </div>
   );
 }

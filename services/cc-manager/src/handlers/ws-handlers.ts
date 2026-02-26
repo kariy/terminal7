@@ -102,6 +102,7 @@ export function createWsHandlers(app: App) {
 		}
 
 		const encodedCwd = encodeCwd(cwd);
+		app.fileIndexService?.ensureIndex({ encodedCwd, cwd });
 
 		void handlePromptMessage(ws, {
 			requestId,
@@ -154,6 +155,10 @@ export function createWsHandlers(app: App) {
 
 		const cwd = metadata.cwd;
 		const requestId = message.request_id ?? crypto.randomUUID();
+		app.fileIndexService?.ensureIndex({
+			encodedCwd: message.encoded_cwd,
+			cwd,
+		});
 
 		void handlePromptMessage(ws, {
 			cwd,
@@ -221,6 +226,62 @@ export function createWsHandlers(app: App) {
 		});
 	}
 
+	function handleFileSearch(
+		ws: Bun.ServerWebSocket<WsSessionState>,
+		message: WsClientMessage,
+	) {
+		if (message.type !== "file.search") return;
+
+		const metadata = app.repository.getSessionMetadata(
+			message.session_id,
+			message.encoded_cwd,
+		);
+		if (!metadata) {
+			wsError(
+				ws,
+				"Session not found",
+				"session_not_found",
+				message.request_id,
+			);
+			return;
+		}
+
+		const cwd = metadata.cwd;
+		const fileIndexService = app.fileIndexService;
+		if (!fileIndexService) {
+			wsError(
+				ws,
+				"File index service unavailable",
+				"not_implemented",
+				message.request_id,
+			);
+			return;
+		}
+
+		fileIndexService.ensureIndex({
+			encodedCwd: message.encoded_cwd,
+			cwd,
+		});
+
+		const result = fileIndexService.search({
+			encodedCwd: message.encoded_cwd,
+			cwd,
+			query: message.query,
+			limit: message.limit,
+		});
+
+		wsSend(ws, {
+			type: "file.search.result",
+			request_id: message.request_id,
+			session_id: message.session_id,
+			encoded_cwd: message.encoded_cwd,
+			query: message.query,
+			entries: result.entries,
+			indexing: result.indexing,
+			...(result.truncated ? { truncated: true } : {}),
+		});
+	}
+
 	const handlers: Record<string, WsHandler> = {
 		"session.create": handleSessionCreate,
 		"session.resume": handleSessionResumeOrSend,
@@ -229,6 +290,7 @@ export function createWsHandlers(app: App) {
 		"session.refresh_index": handleRefreshIndex,
 		ping: handlePing,
 		"repo.list": handleRepoList,
+		"file.search": handleFileSearch,
 	};
 
 	return {

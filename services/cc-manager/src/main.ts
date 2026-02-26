@@ -1,6 +1,7 @@
 import { ClaudeService } from "./claude-service";
 import type { ClaudeServiceLike } from "./claude-service";
 import { loadConfig, type ManagerConfig } from "./config";
+import { FileIndexService, type FileIndexServiceLike } from "./file-index-service";
 import { ClaudeJsonlIndexer } from "./jsonl-indexer";
 import { GitService } from "./git-service";
 import type { GitServiceLike } from "./git-service";
@@ -35,6 +36,7 @@ export interface ServerDeps {
 	indexer?: IndexerLike;
 	terminalService?: TerminalServiceLike;
 	gitService?: GitServiceLike;
+	fileIndexService?: FileIndexServiceLike;
 }
 
 export interface ServerHandle {
@@ -45,9 +47,24 @@ export interface ServerHandle {
 // ── Server factory ──────────────────────────────────────────────
 
 export function createServer(deps: ServerDeps): ServerHandle {
-	const { config, repository, claudeService, indexer, terminalService, gitService } = deps;
+	const {
+		config,
+		repository,
+		claudeService,
+		indexer,
+		terminalService,
+		gitService,
+		fileIndexService = new FileIndexService(),
+	} = deps;
 
-	const app = new App({ repository, claudeService, config, indexer, gitService });
+	const app = new App({
+		repository,
+		claudeService,
+		config,
+		indexer,
+		gitService,
+		fileIndexService,
+	});
 	const sessionWsHandlers = createWsHandlers(app);
 
 	const server = Bun.serve<WsConnectionState>({
@@ -375,6 +392,7 @@ export function createServer(deps: ServerDeps): ServerHandle {
 
 	function stop() {
 		server.stop(true);
+		fileIndexService.dispose();
 		repository.close();
 	}
 
@@ -397,6 +415,7 @@ if (import.meta.main) {
 	const claudeService = new ClaudeService();
 	const terminalService = new TerminalService();
 	const gitService = new GitService();
+	const fileIndexService = new FileIndexService();
 
 	// Ensure projects directories exist
 	mkdirSync(join(config.projectsDir, "repos"), { recursive: true });
@@ -407,7 +426,15 @@ if (import.meta.main) {
 		`startup indexed=${initialStats.indexed} skipped=${initialStats.skippedUnchanged} errors=${initialStats.parseErrors}`,
 	);
 
-	const handle = createServer({ config, repository, claudeService, indexer, terminalService, gitService });
+	const handle = createServer({
+		config,
+		repository,
+		claudeService,
+		indexer,
+		terminalService,
+		gitService,
+		fileIndexService,
+	});
 
 	const indexInterval = setInterval(() => {
 		const stats = indexer.refreshIndex();

@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { ClaudeServiceLike, StreamPromptArgs } from "./claude-service";
+import type { FileIndexServiceLike, FileSearchEntry } from "./file-index-service";
 import type {
 	GitServiceLike,
 	RepoInfo,
@@ -137,6 +138,66 @@ export class MockGitService implements GitServiceLike {
 	}
 }
 
+// ── MockFileIndexService ────────────────────────────────────────
+
+export class MockFileIndexService implements FileIndexServiceLike {
+	ensureCalls: Array<{ encodedCwd: string; cwd: string }> = [];
+	searchCalls: Array<{
+		encodedCwd: string;
+		cwd: string;
+		query: string;
+		limit?: number;
+	}> = [];
+	disposed = false;
+
+	private readonly entriesByCwd = new Map<string, FileSearchEntry[]>();
+	private readonly indexingByCwd = new Map<string, boolean>();
+	private readonly truncatedByCwd = new Map<string, boolean>();
+
+	setEntries(encodedCwd: string, entries: FileSearchEntry[]): void {
+		this.entriesByCwd.set(encodedCwd, entries);
+	}
+
+	setIndexing(encodedCwd: string, indexing: boolean): void {
+		this.indexingByCwd.set(encodedCwd, indexing);
+	}
+
+	setTruncated(encodedCwd: string, truncated: boolean): void {
+		this.truncatedByCwd.set(encodedCwd, truncated);
+	}
+
+	ensureIndex(params: { encodedCwd: string; cwd: string }): void {
+		this.ensureCalls.push(params);
+	}
+
+	search(params: {
+		encodedCwd: string;
+		cwd: string;
+		query: string;
+		limit?: number;
+	}) {
+		this.searchCalls.push(params);
+		const allEntries = this.entriesByCwd.get(params.encodedCwd) ?? [];
+		const query = params.query.trim().toLowerCase();
+		const limit = params.limit ?? 20;
+		const filtered = query.length === 0
+			? allEntries
+			: allEntries.filter((entry) =>
+					entry.path.toLowerCase().includes(query),
+				);
+
+		return {
+			entries: filtered.slice(0, limit),
+			indexing: this.indexingByCwd.get(params.encodedCwd) ?? false,
+			truncated: this.truncatedByCwd.get(params.encodedCwd) ?? false,
+		};
+	}
+
+	dispose(): void {
+		this.disposed = true;
+	}
+}
+
 // ── Test server lifecycle ───────────────────────────────────────
 
 export interface TestContext {
@@ -147,6 +208,7 @@ export interface TestContext {
 	claudeService: MockClaudeService;
 	terminalService?: MockTerminalService;
 	gitService?: MockGitService;
+	fileIndexService: MockFileIndexService;
 	config: ManagerConfig;
 	tempDir: string;
 }
@@ -181,8 +243,16 @@ export function createTestServer(overridesOrOpts?: Partial<ManagerConfig> | Crea
 	const claudeService = new MockClaudeService();
 	const terminalService = opts?.withTerminalService ? new MockTerminalService() : undefined;
 	const gitService = opts?.withGitService ? new MockGitService() : undefined;
+	const fileIndexService = new MockFileIndexService();
 
-	const handle = createServer({ config, repository, claudeService, terminalService, gitService });
+	const handle = createServer({
+		config,
+		repository,
+		claudeService,
+		terminalService,
+		gitService,
+		fileIndexService,
+	});
 	const port = handle.server.port;
 
 	return {
@@ -193,6 +263,7 @@ export function createTestServer(overridesOrOpts?: Partial<ManagerConfig> | Crea
 		claudeService,
 		terminalService,
 		gitService,
+		fileIndexService,
 		config,
 		tempDir,
 	};

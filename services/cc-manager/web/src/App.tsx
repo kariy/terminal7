@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useWebSocket } from "@/hooks/use-websocket";
 import { useTerminal } from "@/hooks/use-terminal";
-import type { WsServerMessage, WsSessionMeta } from "@/types/ws";
+import type {
+  WsFileSearchEntry,
+  WsServerMessage,
+  WsSessionCreateMessage,
+  WsSessionMeta,
+} from "@/types/ws";
 import type { SDKMessage } from "@/types/sdk-messages";
 import type { SessionListItem, HistoryMessage, SshConnectionItem } from "@/types/api";
 import { fetchSessions, fetchHistory, fetchSshConnections, createSshConnection, deleteSshConnection } from "@/lib/api";
@@ -492,6 +497,9 @@ export default function App() {
     sessionId: string;
     encodedCwd: string;
   } | null>(null);
+  const [fileSuggestions, setFileSuggestions] = useState<WsFileSearchEntry[]>([]);
+  const [fileSearchIndexing, setFileSearchIndexing] = useState(false);
+  const fileSearchQueryRef = useRef<string | null>(null);
 
   const handleWsMessage = useCallback((msg: WsServerMessage) => {
     switch (msg.type) {
@@ -638,6 +646,21 @@ export default function App() {
       case "repo.list":
         // Handled by RepoSelectionDialog directly via REST
         break;
+
+      case "file.search.result": {
+        const current = stateRef.current;
+        if (
+          current.activeSessionId !== msg.session_id ||
+          current.activeEncodedCwd !== msg.encoded_cwd
+        ) {
+          break;
+        }
+        if (fileSearchQueryRef.current === null) break;
+        if (msg.query !== fileSearchQueryRef.current) break;
+        setFileSuggestions(msg.entries);
+        setFileSearchIndexing(msg.indexing);
+        break;
+      }
     }
   }, []);
 
@@ -666,6 +689,12 @@ export default function App() {
       }
     }
   }, [status]);
+
+  useEffect(() => {
+    fileSearchQueryRef.current = null;
+    setFileSuggestions([]);
+    setFileSearchIndexing(false);
+  }, [state.activeSessionId, state.activeEncodedCwd, state.view]);
 
   // popstate routing
   useEffect(() => {
@@ -777,7 +806,7 @@ export default function App() {
           prompt: text,
         });
       } else {
-        const createMsg: Record<string, unknown> = {
+        const createMsg: WsSessionCreateMessage = {
           type: "session.create",
           request_id: requestId,
           prompt: text,
@@ -792,6 +821,40 @@ export default function App() {
       }
     },
     [status, send, pendingRepoSelection],
+  );
+
+  const handleFileSearch = useCallback(
+    (query: string | null) => {
+      if (query === null) {
+        fileSearchQueryRef.current = null;
+        setFileSuggestions([]);
+        setFileSearchIndexing(false);
+        return;
+      }
+
+      if (status !== "connected") {
+        setFileSearchIndexing(false);
+        return;
+      }
+
+      const current = stateRef.current;
+      if (!current.activeSessionId || !current.activeEncodedCwd) {
+        setFileSearchIndexing(false);
+        return;
+      }
+
+      fileSearchQueryRef.current = query;
+      setFileSearchIndexing(true);
+      send({
+        type: "file.search",
+        request_id: crypto.randomUUID(),
+        session_id: current.activeSessionId,
+        encoded_cwd: current.activeEncodedCwd,
+        query,
+        limit: 20,
+      });
+    },
+    [send, status],
   );
 
   const handleOpenTerminal = useCallback(
@@ -1003,6 +1066,9 @@ export default function App() {
           messages={state.messages}
           activeRequestIds={state.activeRequestIds}
           onSend={handleSendMessage}
+          onFileSearch={handleFileSearch}
+          fileSuggestions={fileSuggestions}
+          fileIndexing={fileSearchIndexing}
         />
       )}
       {state.view === "terminal" && (

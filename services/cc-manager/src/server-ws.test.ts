@@ -171,6 +171,27 @@ describe("session.create flow", () => {
 		expect(typeof created.request_id).toBe("string");
 		expect((created.request_id as string).length).toBeGreaterThan(0);
 	});
+
+	test("initializes file index for cwd on session.create", async () => {
+		await connect();
+		await ws.nextMessage(); // consume hello
+
+		ws.send({
+			type: "session.create",
+			request_id: "req-index",
+			prompt: "Build index",
+			cwd: "/tmp",
+		});
+
+		const created = (await ws.nextMessage()) as Record<string, unknown>;
+		expect(created.type).toBe("session.created");
+
+		expect(ctx.fileIndexService.ensureCalls.length).toBeGreaterThan(0);
+		expect(ctx.fileIndexService.ensureCalls[0]?.cwd).toBe("/tmp");
+		expect(ctx.fileIndexService.ensureCalls[0]?.encodedCwd).toBe(
+			created.encoded_cwd,
+		);
+	});
 });
 
 describe("session.resume/send flow", () => {
@@ -265,6 +286,75 @@ describe("session.stop", () => {
 		expect(state.type).toBe("session.state");
 		expect(state.status).toBe("not_found");
 		expect(state.request_id).toBe("unknown-req");
+	});
+});
+
+describe("file.search", () => {
+	test("returns matching file and directory entries", async () => {
+		const sessionId = "sess-file-search";
+		const encodedCwd = "-workspace";
+		ctx.repository.upsertSessionMetadata({
+			sessionId,
+			encodedCwd,
+			cwd: "/workspace",
+			title: "File Search",
+			source: "db",
+		});
+		ctx.fileIndexService.setEntries(encodedCwd, [
+			{ path: "src", kind: "dir" },
+			{ path: "src/index.ts", kind: "file" },
+			{ path: "README.md", kind: "file" },
+		]);
+		ctx.fileIndexService.setIndexing(encodedCwd, true);
+
+		await connect();
+		await ws.nextMessage(); // consume hello
+
+		ws.send({
+			type: "file.search",
+			request_id: "req-file-search",
+			session_id: sessionId,
+			encoded_cwd: encodedCwd,
+			query: "src",
+			limit: 10,
+		});
+
+		const result = (await ws.nextMessage()) as Record<string, unknown>;
+		expect(result.type).toBe("file.search.result");
+		expect(result.request_id).toBe("req-file-search");
+		expect(result.session_id).toBe(sessionId);
+		expect(result.encoded_cwd).toBe(encodedCwd);
+		expect(result.query).toBe("src");
+		expect(result.indexing).toBe(true);
+
+		const entries = result.entries as Array<Record<string, unknown>>;
+		expect(entries.length).toBe(2);
+		expect(entries[0]?.path).toBe("src");
+		expect(entries[0]?.kind).toBe("dir");
+		expect(entries[1]?.path).toBe("src/index.ts");
+		expect(entries[1]?.kind).toBe("file");
+
+		expect(ctx.fileIndexService.ensureCalls.length).toBe(1);
+		expect(ctx.fileIndexService.ensureCalls[0]?.encodedCwd).toBe(encodedCwd);
+		expect(ctx.fileIndexService.ensureCalls[0]?.cwd).toBe("/workspace");
+	});
+
+	test("returns session_not_found when session metadata is missing", async () => {
+		await connect();
+		await ws.nextMessage(); // consume hello
+
+		ws.send({
+			type: "file.search",
+			request_id: "req-missing",
+			session_id: "missing",
+			encoded_cwd: "-missing",
+			query: "",
+		});
+
+		const error = (await ws.nextMessage()) as Record<string, unknown>;
+		expect(error.type).toBe("error");
+		expect(error.code).toBe("session_not_found");
+		expect(error.request_id).toBe("req-missing");
 	});
 });
 

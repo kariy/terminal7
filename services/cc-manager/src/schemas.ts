@@ -44,6 +44,15 @@ export const WsRepoListSchema = z.object({
 	type: z.literal("repo.list"),
 });
 
+export const WsFileSearchSchema = z.object({
+	type: z.literal("file.search"),
+	request_id: z.string().min(1).optional(),
+	session_id: z.string().min(1),
+	encoded_cwd: z.string().min(1),
+	query: z.string(),
+	limit: z.number().int().min(1).max(50).optional(),
+});
+
 export const WsClientMessageSchema = z.discriminatedUnion("type", [
 	WsSessionCreateSchema,
 	WsSessionResumeSchema,
@@ -52,6 +61,7 @@ export const WsClientMessageSchema = z.discriminatedUnion("type", [
 	WsRefreshIndexSchema,
 	WsPingSchema,
 	WsRepoListSchema,
+	WsFileSearchSchema,
 ]);
 
 export type WsClientMessage = z.infer<typeof WsClientMessageSchema>;
