@@ -11,6 +11,7 @@ import {
   Check,
   X,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { ContentBlockState } from "@/types/chat";
 import { ToolInput } from "./ToolInput";
 
@@ -18,6 +19,8 @@ interface ToolCallBlockProps {
   block: ContentBlockState;
   result?: ContentBlockState;
   isStreaming?: boolean;
+  extraTopSpace?: boolean;
+  extraBottomSpace?: boolean;
 }
 
 const toolIcons: Record<string, typeof Terminal> = {
@@ -37,7 +40,13 @@ function ToolIcon({ name }: { name: string }) {
   return <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
 }
 
-export function ToolCallBlock({ block, result, isStreaming }: ToolCallBlockProps) {
+export function ToolCallBlock({
+  block,
+  result,
+  isStreaming,
+  extraTopSpace,
+  extraBottomSpace,
+}: ToolCallBlockProps) {
   const isRunning = !block.isComplete && isStreaming;
   const isError = result?.isError;
 
@@ -50,7 +59,13 @@ export function ToolCallBlock({ block, result, isStreaming }: ToolCallBlockProps
   };
 
   return (
-    <div className="my-1.5 border rounded-lg bg-secondary/30 overflow-hidden">
+    <div
+      className={cn(
+        "border rounded-lg bg-secondary/30 overflow-hidden",
+        extraTopSpace ? "mt-2.5" : "mt-1.5",
+        extraBottomSpace ? "mb-2.5" : "mb-1.5",
+      )}
+    >
       <button
         type="button"
         onClick={handleToggle}

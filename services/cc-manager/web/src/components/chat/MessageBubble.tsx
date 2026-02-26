@@ -31,10 +31,12 @@ export function MessageBubble({ role, contentBlocks, isStreaming }: MessageBubbl
     }
   }
 
+  const visibleBlocks = contentBlocks.filter((block) => block.type !== "tool_result");
+
   // Find the last text block index for streaming cursor
   let lastTextIndex = -1;
-  for (let i = contentBlocks.length - 1; i >= 0; i--) {
-    if (contentBlocks[i].type === "text") {
+  for (let i = visibleBlocks.length - 1; i >= 0; i--) {
+    if (visibleBlocks[i].type === "text") {
       lastTextIndex = i;
       break;
     }
@@ -43,7 +45,7 @@ export function MessageBubble({ role, contentBlocks, isStreaming }: MessageBubbl
   return (
     <div className="flex justify-start">
       <div className="max-w-[90%] px-3.5 py-2.5 rounded-2xl rounded-bl-sm bg-card border border-border text-sm leading-relaxed break-words">
-        {contentBlocks.map((block, i) => {
+        {visibleBlocks.map((block, i) => {
           if (block.type === "text") {
             return (
               <TextBlock
@@ -56,12 +58,16 @@ export function MessageBubble({ role, contentBlocks, isStreaming }: MessageBubbl
 
           if (block.type === "tool_use") {
             const result = block.toolId ? toolResults.get(block.toolId) : undefined;
+            const prevBlock = visibleBlocks[i - 1];
+            const nextBlock = visibleBlocks[i + 1];
             return (
               <ToolCallBlock
                 key={i}
                 block={block}
                 result={result}
                 isStreaming={isStreaming}
+                extraTopSpace={prevBlock?.type === "text"}
+                extraBottomSpace={nextBlock?.type === "text"}
               />
             );
           }
@@ -74,11 +80,6 @@ export function MessageBubble({ role, contentBlocks, isStreaming }: MessageBubbl
                 isStreaming={isStreaming && !block.isComplete}
               />
             );
-          }
-
-          if (block.type === "tool_result") {
-            // Rendered inside ToolCallBlock
-            return null;
           }
 
           if (block.type === "result") {
