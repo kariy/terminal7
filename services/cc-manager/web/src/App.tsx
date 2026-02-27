@@ -29,6 +29,7 @@ import type {
 // ── State ──
 
 type View = "connecting" | "sessions" | "ssh" | "chat" | "terminal";
+const SESSIONS_PAGE_SIZE = 25;
 
 interface AppState {
   view: View;
@@ -596,6 +597,38 @@ export default function App() {
   const [fileSuggestions, setFileSuggestions] = useState<WsFileSearchEntry[]>([]);
   const [fileSearchIndexing, setFileSearchIndexing] = useState(false);
   const fileSearchQueryRef = useRef<string | null>(null);
+  const [sessionsNextCursor, setSessionsNextCursor] = useState<string | null>(null);
+  const [sessionsLoadingMore, setSessionsLoadingMore] = useState(false);
+
+  const loadSessionsFirstPage = useCallback((refresh: boolean) => {
+    return fetchSessions({ refresh, limit: SESSIONS_PAGE_SIZE })
+      .then((data) => {
+        dispatch({
+          type: "SET_SESSIONS",
+          sessions: data.items,
+        });
+        setSessionsNextCursor(data.next_cursor);
+        return data;
+      });
+  }, []);
+
+  const loadMoreSessions = useCallback(() => {
+    const cursor = sessionsNextCursor;
+    if (!cursor || sessionsLoadingMore) return;
+    setSessionsLoadingMore(true);
+    void fetchSessions({ cursor, limit: SESSIONS_PAGE_SIZE })
+      .then((data) => {
+        dispatch({
+          type: "SET_SESSIONS",
+          sessions: [...stateRef.current.sessions, ...data.items],
+        });
+        setSessionsNextCursor(data.next_cursor);
+      })
+      .catch(() => {})
+      .finally(() => {
+        setSessionsLoadingMore(false);
+      });
+  }, [sessionsLoadingMore, sessionsNextCursor]);
 
   const handleWsMessage = useCallback((msg: WsServerMessage) => {
     switch (msg.type) {
@@ -605,15 +638,10 @@ export default function App() {
           hasConnectedRef.current = true;
           const route = getRouteFromPath();
 
-          fetchSessions(true)
+          loadSessionsFirstPage(true)
             .then((data) => {
-              dispatch({
-                type: "SET_SESSIONS",
-                sessions: data.sessions,
-              });
-
               if (route.view === "chat" && route.sessionId) {
-                const s = data.sessions.find(
+                const s = data.items.find(
                   (s) => s.session_id === route.sessionId,
                 );
                 dispatch({
@@ -631,6 +659,21 @@ export default function App() {
                       });
                     },
                   );
+                } else {
+                  fetchHistory(route.sessionId!)
+                    .then((hist) => {
+                      dispatch({
+                        type: "SESSION_STATE",
+                        sessionId: route.sessionId!,
+                        encodedCwd: hist.encoded_cwd,
+                      });
+                      dispatch({
+                        type: "SET_HISTORY",
+                        sessionId: route.sessionId!,
+                        messages: mapHistoryToChat(hist.messages),
+                      });
+                    })
+                    .catch(() => {});
                 }
               } else if (route.view === "ssh") {
                 dispatch({ type: "SET_VIEW", view: "ssh" });
@@ -646,13 +689,7 @@ export default function App() {
             });
         } else {
           // Reconnecting — refresh sessions
-          fetchSessions(false)
-            .then((data) => {
-              dispatch({
-                type: "SET_SESSIONS",
-                sessions: data.sessions,
-              });
-            })
+          loadSessionsFirstPage(false)
             .catch(() => {});
 
           const current = stateRef.current;
@@ -689,13 +726,7 @@ export default function App() {
           msg.status === "index_refreshed" &&
           stateRef.current.view === "sessions"
         ) {
-          fetchSessions(false)
-            .then((data) =>
-              dispatch({
-                type: "SET_SESSIONS",
-                sessions: data.sessions,
-              }),
-            )
+          loadSessionsFirstPage(false)
             .catch(() => {});
         }
         break;
@@ -772,7 +803,7 @@ export default function App() {
         break;
       }
     }
-  }, []);
+  }, [loadSessionsFirstPage]);
 
   const { status, send, disconnect } = useWebSocket({
     onMessage: handleWsMessage,
@@ -828,6 +859,21 @@ export default function App() {
               messages: mapHistoryToChat(hist.messages),
             });
           });
+        } else {
+          fetchHistory(route.sessionId)
+            .then((hist) => {
+              dispatch({
+                type: "SESSION_STATE",
+                sessionId: route.sessionId!,
+                encodedCwd: hist.encoded_cwd,
+              });
+              dispatch({
+                type: "SET_HISTORY",
+                sessionId: route.sessionId!,
+                messages: mapHistoryToChat(hist.messages),
+              });
+            })
+            .catch(() => {});
         }
       } else if (route.view === "ssh") {
         dispatch({ type: "SET_VIEW", view: "ssh" });
@@ -845,12 +891,9 @@ export default function App() {
   // ── Handlers ──
 
   const handleRefresh = useCallback(() => {
-    fetchSessions(true)
-      .then((data) =>
-        dispatch({ type: "SET_SESSIONS", sessions: data.sessions }),
-      )
+    loadSessionsFirstPage(true)
       .catch(() => {});
-  }, []);
+  }, [loadSessionsFirstPage]);
 
   const handleOpenSession = useCallback(
     (index: number) => {
@@ -892,12 +935,9 @@ export default function App() {
   const handleReturnToSessions = useCallback(() => {
     dispatch({ type: "RETURN_TO_SESSIONS" });
     pushUrl("/");
-    fetchSessions(false)
-      .then((data) =>
-        dispatch({ type: "SET_SESSIONS", sessions: data.sessions }),
-      )
+    loadSessionsFirstPage(false)
       .catch(() => {});
-  }, []);
+  }, [loadSessionsFirstPage]);
 
   const handleSendMessage = useCallback(
     (text: string) => {
@@ -1092,10 +1132,7 @@ export default function App() {
       if (tab === "sessions") {
         dispatch({ type: "SET_VIEW", view: "sessions" });
         pushUrl("/");
-        fetchSessions(false)
-          .then((data) =>
-            dispatch({ type: "SET_SESSIONS", sessions: data.sessions }),
-          )
+        loadSessionsFirstPage(false)
           .catch(() => {});
       } else {
         dispatch({ type: "SET_VIEW", view: "ssh" });
@@ -1105,7 +1142,7 @@ export default function App() {
           .catch(() => {});
       }
     },
-    [],
+    [loadSessionsFirstPage],
   );
 
   const handleCloseTerminal = useCallback(() => {
@@ -1119,13 +1156,10 @@ export default function App() {
         .catch(() => {});
     } else {
       pushUrl("/");
-      fetchSessions(false)
-        .then((data) =>
-          dispatch({ type: "SET_SESSIONS", sessions: data.sessions }),
-        )
+      loadSessionsFirstPage(false)
         .catch(() => {});
     }
-  }, [terminal]);
+  }, [loadSessionsFirstPage, terminal]);
 
   const handleDisconnect = useCallback(() => {
     disconnect();
@@ -1183,6 +1217,9 @@ export default function App() {
         <SessionsView
           sessions={state.sessions}
           onRefresh={handleRefresh}
+          onLoadMore={loadMoreSessions}
+          hasMore={sessionsNextCursor !== null}
+          loadingMore={sessionsLoadingMore}
           onOpenSession={handleOpenSession}
           onNewSession={handleNewSession}
           onOpenTerminal={handleOpenTerminal}

@@ -1,3 +1,5 @@
+import type { SessionListCursor } from "./types";
+
 export function nowMs(): number {
 	return Date.now();
 }
@@ -21,6 +23,47 @@ export function decodeEncodedCwd(encodedCwd: string): string {
 
 export function shellEscape(s: string): string {
 	return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+export function encodeSessionListCursor(cursor: SessionListCursor): string {
+	const payload = JSON.stringify({
+		last_activity_at: cursor.lastActivityAt,
+		session_id: cursor.sessionId,
+		encoded_cwd: cursor.encodedCwd,
+	});
+	return Buffer.from(payload, "utf8").toString("base64url");
+}
+
+export function decodeSessionListCursor(
+	raw: string,
+): SessionListCursor | null {
+	try {
+		const decoded = Buffer.from(raw, "base64url").toString("utf8");
+		const parsed = JSON.parse(decoded) as Record<string, unknown>;
+
+		const lastActivityAt = parsed.last_activity_at;
+		const sessionId = parsed.session_id;
+		const encodedCwd = parsed.encoded_cwd;
+
+		if (
+			typeof lastActivityAt !== "number" ||
+			!Number.isFinite(lastActivityAt) ||
+			typeof sessionId !== "string" ||
+			sessionId.length === 0 ||
+			typeof encodedCwd !== "string" ||
+			encodedCwd.length === 0
+		) {
+			return null;
+		}
+
+		return {
+			lastActivityAt,
+			sessionId,
+			encodedCwd,
+		};
+	} catch {
+		return null;
+	}
 }
 
 export function extractTextBlocks(content: unknown): string {

@@ -1,9 +1,15 @@
 import type { SessionListResponse, SessionHistoryResponse, RepositoryListResponse, SshConnectionListResponse, SshConnectionItem } from "@/types/api";
 
 export async function fetchSessions(
-  refresh?: boolean,
+  params?: { refresh?: boolean; limit?: number; cursor?: string | null },
 ): Promise<SessionListResponse> {
-  const qs = refresh ? "?refresh=1" : "";
+  const query = new URLSearchParams();
+  if (params?.refresh) query.set("refresh", "1");
+  if (typeof params?.limit === "number" && Number.isFinite(params.limit)) {
+    query.set("limit", String(Math.trunc(params.limit)));
+  }
+  if (params?.cursor) query.set("cursor", params.cursor);
+  const qs = query.toString() ? `?${query.toString()}` : "";
   const res = await fetch("/v1/sessions" + qs);
   if (!res.ok) throw new Error("Failed to fetch sessions: " + res.status);
   return res.json();

@@ -34,12 +34,16 @@ describe("GET /health", () => {
 });
 
 describe("GET /v1/sessions", () => {
-	test("returns 200 with { sessions: [] } when DB is empty", async () => {
+	test("returns 200 with { items: [], next_cursor: null } when DB is empty", async () => {
 		const res = await fetch(`${ctx.baseUrl}/v1/sessions`);
 		expect(res.status).toBe(200);
 
-		const body = (await res.json()) as { sessions: unknown[] };
-		expect(body.sessions).toEqual([]);
+		const body = (await res.json()) as {
+			items: unknown[];
+			next_cursor: string | null;
+		};
+		expect(body.items).toEqual([]);
+		expect(body.next_cursor).toBeNull();
 	});
 
 	test("returns sessions with correct shape after inserting via repository", async () => {
@@ -54,10 +58,14 @@ describe("GET /v1/sessions", () => {
 		const res = await fetch(`${ctx.baseUrl}/v1/sessions`);
 		expect(res.status).toBe(200);
 
-		const body = (await res.json()) as { sessions: Record<string, unknown>[] };
-		expect(body.sessions.length).toBe(1);
+		const body = (await res.json()) as {
+			items: Record<string, unknown>[];
+			next_cursor: string | null;
+		};
+		expect(body.items.length).toBe(1);
+		expect(body.next_cursor).toBeNull();
 
-		const session = body.sessions[0]!;
+		const session = body.items[0]!;
 		expect(session.session_id).toBe("sess-1");
 		expect(session.encoded_cwd).toBe("-home-user");
 		expect(session.cwd).toBe("/home/user");
@@ -74,8 +82,8 @@ describe("GET /v1/sessions", () => {
 		});
 
 		const res = await fetch(`${ctx.baseUrl}/v1/sessions`);
-		const body = (await res.json()) as { sessions: Record<string, unknown>[] };
-		const session = body.sessions[0]!;
+		const body = (await res.json()) as { items: Record<string, unknown>[] };
+		const session = body.items[0]!;
 
 		expect(typeof session.session_id).toBe("string");
 		expect(typeof session.encoded_cwd).toBe("string");
@@ -106,10 +114,69 @@ describe("GET /v1/sessions", () => {
 		});
 
 		const res = await fetch(`${ctx.baseUrl}/v1/sessions`);
-		const body = (await res.json()) as { sessions: Record<string, unknown>[] };
-		expect(body.sessions.length).toBe(2);
-		expect(body.sessions[0]!.session_id).toBe("sess-new");
-		expect(body.sessions[1]!.session_id).toBe("sess-old");
+		const body = (await res.json()) as { items: Record<string, unknown>[] };
+		expect(body.items.length).toBe(2);
+		expect(body.items[0]!.session_id).toBe("sess-new");
+		expect(body.items[1]!.session_id).toBe("sess-old");
+	});
+
+	test("supports cursor pagination using limit and cursor", async () => {
+		ctx.repository.upsertSessionMetadata({
+			sessionId: "sess-1",
+			encodedCwd: "-1",
+			cwd: "/1",
+			title: "1",
+			lastActivityAt: 1001,
+			source: "db",
+		});
+		ctx.repository.upsertSessionMetadata({
+			sessionId: "sess-2",
+			encodedCwd: "-2",
+			cwd: "/2",
+			title: "2",
+			lastActivityAt: 1002,
+			source: "db",
+		});
+		ctx.repository.upsertSessionMetadata({
+			sessionId: "sess-3",
+			encodedCwd: "-3",
+			cwd: "/3",
+			title: "3",
+			lastActivityAt: 1003,
+			source: "db",
+		});
+
+		const firstRes = await fetch(`${ctx.baseUrl}/v1/sessions?limit=2`);
+		expect(firstRes.status).toBe(200);
+		const firstBody = (await firstRes.json()) as {
+			items: Record<string, unknown>[];
+			next_cursor: string | null;
+		};
+		expect(firstBody.items.length).toBe(2);
+		expect(firstBody.items[0]?.session_id).toBe("sess-3");
+		expect(firstBody.items[1]?.session_id).toBe("sess-2");
+		expect(typeof firstBody.next_cursor).toBe("string");
+
+		const secondRes = await fetch(
+			`${ctx.baseUrl}/v1/sessions?limit=2&cursor=${encodeURIComponent(firstBody.next_cursor!)}`,
+		);
+		expect(secondRes.status).toBe(200);
+		const secondBody = (await secondRes.json()) as {
+			items: Record<string, unknown>[];
+			next_cursor: string | null;
+		};
+		expect(secondBody.items.length).toBe(1);
+		expect(secondBody.items[0]?.session_id).toBe("sess-1");
+		expect(secondBody.next_cursor).toBeNull();
+	});
+
+	test("returns 400 invalid_cursor for malformed cursor", async () => {
+		const res = await fetch(`${ctx.baseUrl}/v1/sessions?cursor=not-base64`);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as {
+			error: { code: string; message: string };
+		};
+		expect(body.error.code).toBe("invalid_cursor");
 	});
 });
 

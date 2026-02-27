@@ -6,6 +6,7 @@ import { jsonResponse } from "./http-utils";
 import type { ManagerRepository } from "./repository";
 import type { IndexerLike } from "./main";
 import { toSshConnectionListItem } from "./types";
+import { decodeSessionListCursor, encodeSessionListCursor } from "./utils";
 
 export class App {
 	readonly repository: ManagerRepository;
@@ -36,9 +37,30 @@ export class App {
 		if (this.indexer && url.searchParams.get("refresh") === "1") {
 			this.indexer.refreshIndex();
 		}
-		const sessions = this.repository.listSessions();
+
+		const limitRaw = url.searchParams.get("limit");
+		const parsedLimit = limitRaw ? Number.parseInt(limitRaw, 10) : NaN;
+		const limit = Number.isNaN(parsedLimit)
+			? 25
+			: Math.max(1, Math.min(parsedLimit, 100));
+
+		const cursorRaw = url.searchParams.get("cursor");
+		const cursor = cursorRaw
+			? decodeSessionListCursor(cursorRaw)
+			: undefined;
+
+		if (cursorRaw && !cursor) {
+			return jsonResponse(400, {
+				error: {
+					code: "invalid_cursor",
+					message: "Invalid cursor",
+				},
+			});
+		}
+
+		const page = this.repository.listSessionsPage({ limit, cursor });
 		return jsonResponse(200, {
-			sessions: sessions.map((session) => ({
+			items: page.items.map((session) => ({
 				session_id: session.sessionId,
 				encoded_cwd: session.encodedCwd,
 				cwd: session.cwd,
@@ -53,6 +75,9 @@ export class App {
 				worktree_path: session.worktreePath,
 				branch: session.branch,
 			})),
+			next_cursor: page.nextCursor
+				? encodeSessionListCursor(page.nextCursor)
+				: null,
 		});
 	}
 

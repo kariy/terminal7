@@ -4,6 +4,7 @@ import { dirname } from "path";
 import type {
 	JsonlIndexUpdate,
 	RepositoryInfo,
+	SessionListCursor,
 	SessionMetadata,
 	SessionSummary,
 	SshConnection,
@@ -348,6 +349,83 @@ export class ManagerRepository {
 			.get(sessionId, encodedCwd) as FileIndexRow | null;
 	}
 
+	listSessionsPage(params: {
+		limit: number;
+		cursor?: SessionListCursor;
+	}): { items: SessionSummary[]; nextCursor: SessionListCursor | null } {
+		const limit = Math.max(1, Math.min(params.limit, 100));
+		const limitPlusOne = limit + 1;
+
+		const baseSelect = `SELECT
+				sm.session_id,
+				sm.encoded_cwd,
+				sm.cwd,
+				sm.title,
+				sm.created_at,
+				sm.updated_at,
+				sm.last_activity_at,
+				sm.source,
+				sm.total_cost_usd,
+				sm.repo_id,
+				sm.worktree_path,
+				sm.branch,
+				COALESCE(fi.message_count, 0) AS message_count
+			FROM session_metadata sm
+			LEFT JOIN session_file_index fi
+				ON fi.session_id = sm.session_id AND fi.encoded_cwd = sm.encoded_cwd`;
+
+		const orderBy = `
+			ORDER BY sm.last_activity_at DESC, sm.session_id DESC, sm.encoded_cwd DESC
+			LIMIT ?`;
+
+		const rows = params.cursor
+			? this.db
+					.query(
+						`${baseSelect}
+						WHERE
+							sm.last_activity_at < ?
+							OR (
+								sm.last_activity_at = ?
+								AND sm.session_id < ?
+							)
+							OR (
+								sm.last_activity_at = ?
+								AND sm.session_id = ?
+								AND sm.encoded_cwd < ?
+							)
+						${orderBy}`,
+					)
+					.all(
+						params.cursor.lastActivityAt,
+						params.cursor.lastActivityAt,
+						params.cursor.sessionId,
+						params.cursor.lastActivityAt,
+						params.cursor.sessionId,
+						params.cursor.encodedCwd,
+						limitPlusOne,
+					)
+			: this.db
+					.query(`${baseSelect} ${orderBy}`)
+					.all(limitPlusOne);
+
+		const typedRows = rows as SessionSummaryRow[];
+		const hasMore = typedRows.length > limit;
+		const pageRows = hasMore ? typedRows.slice(0, limit) : typedRows;
+		const items = pageRows.map((row) => this.mapSessionSummaryRow(row));
+		const last = items.at(-1);
+
+		return {
+			items,
+			nextCursor: hasMore && last
+				? {
+						lastActivityAt: last.lastActivityAt,
+						sessionId: last.sessionId,
+						encodedCwd: last.encodedCwd,
+					}
+				: null,
+		};
+	}
+
 	listSessions(): SessionSummary[] {
 		const rows = this.db
 			.query(
@@ -368,25 +446,11 @@ export class ManagerRepository {
 				FROM session_metadata sm
 				LEFT JOIN session_file_index fi
 					ON fi.session_id = sm.session_id AND fi.encoded_cwd = sm.encoded_cwd
-				ORDER BY sm.last_activity_at DESC`,
+				ORDER BY sm.last_activity_at DESC, sm.session_id DESC, sm.encoded_cwd DESC`,
 			)
 			.all() as SessionSummaryRow[];
 
-		return rows.map((row) => ({
-			sessionId: row.session_id,
-			encodedCwd: row.encoded_cwd,
-			cwd: row.cwd,
-			title: row.title,
-			createdAt: row.created_at,
-			updatedAt: row.updated_at,
-			lastActivityAt: row.last_activity_at,
-			source: row.source,
-			totalCostUsd: row.total_cost_usd,
-			messageCount: row.message_count,
-			repoId: row.repo_id ?? undefined,
-			worktreePath: row.worktree_path ?? undefined,
-			branch: row.branch ?? undefined,
-		}));
+		return rows.map((row) => this.mapSessionSummaryRow(row));
 	}
 
 	getSessionMetadata(
@@ -432,25 +496,11 @@ export class ManagerRepository {
 				LEFT JOIN session_file_index fi
 					ON fi.session_id = sm.session_id AND fi.encoded_cwd = sm.encoded_cwd
 				WHERE sm.session_id = ?
-				ORDER BY sm.last_activity_at DESC`,
+				ORDER BY sm.last_activity_at DESC, sm.session_id DESC, sm.encoded_cwd DESC`,
 			)
 			.all(sessionId) as SessionSummaryRow[];
 
-		return rows.map((row) => ({
-			sessionId: row.session_id,
-			encodedCwd: row.encoded_cwd,
-			cwd: row.cwd,
-			title: row.title,
-			createdAt: row.created_at,
-			updatedAt: row.updated_at,
-			lastActivityAt: row.last_activity_at,
-			source: row.source,
-			totalCostUsd: row.total_cost_usd,
-			messageCount: row.message_count,
-			repoId: row.repo_id ?? undefined,
-			worktreePath: row.worktree_path ?? undefined,
-			branch: row.branch ?? undefined,
-		}));
+		return rows.map((row) => this.mapSessionSummaryRow(row));
 	}
 
 	recordEvent(params: {
@@ -616,6 +666,24 @@ export class ManagerRepository {
 			defaultBranch: row.default_branch,
 			createdAt: row.created_at,
 			lastFetchedAt: row.last_fetched_at,
+		};
+	}
+
+	private mapSessionSummaryRow(row: SessionSummaryRow): SessionSummary {
+		return {
+			sessionId: row.session_id,
+			encodedCwd: row.encoded_cwd,
+			cwd: row.cwd,
+			title: row.title,
+			createdAt: row.created_at,
+			updatedAt: row.updated_at,
+			lastActivityAt: row.last_activity_at,
+			source: row.source,
+			totalCostUsd: row.total_cost_usd,
+			messageCount: row.message_count,
+			repoId: row.repo_id ?? undefined,
+			worktreePath: row.worktree_path ?? undefined,
+			branch: row.branch ?? undefined,
 		};
 	}
 
