@@ -173,10 +173,10 @@ export function RepoSelectionDialog({ onSelect, onCancel }: RepoSelectionDialogP
               <label className="text-xs font-medium text-muted-foreground block">
                 Repositories
               </label>
-              <div className="relative h-8 w-full overflow-hidden rounded-md [clip-path:inset(0)]">
+              <div className="relative h-7 w-full overflow-hidden rounded-md [clip-path:inset(0)]">
                 <div
                   ref={presetPillsContainerRef}
-                  className="flex h-8 w-full items-center gap-2 overflow-x-auto overflow-y-hidden"
+                  className="flex h-7 w-full items-stretch gap-2 overflow-x-auto overflow-y-hidden"
                   onWheel={handlePresetPillsWheel}
                   onScroll={updatePresetShadows}
                 >
@@ -188,7 +188,7 @@ export function RepoSelectionDialog({ onSelect, onCancel }: RepoSelectionDialogP
                         key={`${preset.owner}/${preset.name}`}
                         type="button"
                         onClick={() => handleSelectPreset(preset)}
-                        className={`inline-flex h-7 shrink-0 cursor-pointer items-center rounded-full border px-3 text-xs font-medium transition-colors focus-visible:outline-none ${
+                        className={`inline-flex h-full shrink-0 cursor-pointer items-center rounded-full border px-3 text-xs font-medium transition-colors focus-visible:outline-none ${
                           isSelected
                             ? "border-primary/40 bg-accent text-accent-foreground"
                             : "border-input bg-background hover:bg-accent hover:text-accent-foreground"
