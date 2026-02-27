@@ -23,6 +23,7 @@ import type {
   ChatMessage,
   ContentBlockState,
   PermissionMode,
+  SessionPermissionMode,
   ToolPermissionRequestState,
 } from "@/types/chat";
 
@@ -40,6 +41,8 @@ interface AppState {
   activeSessionMeta: WsSessionMeta | null;
   messages: ChatMessage[];
   permissionRequests: ToolPermissionRequestState[];
+  sessionPermissionModes: Record<string, SessionPermissionMode>;
+  draftPermissionMode: SessionPermissionMode;
   activeRequestIds: Set<string>;
   terminalOrigin: "sessions" | "ssh";
   activeSshConnectionId: string | null;
@@ -54,6 +57,8 @@ const initialState: AppState = {
   activeSessionMeta: null,
   messages: [],
   permissionRequests: [],
+  sessionPermissionModes: {},
+  draftPermissionMode: "default",
   activeRequestIds: new Set(),
   terminalOrigin: "sessions",
   activeSshConnectionId: null,
@@ -82,6 +87,12 @@ type Action =
       message?: string;
       mode?: PermissionMode;
     }
+  | {
+      type: "SET_SESSION_PERMISSION_MODE";
+      sessionId: string | null;
+      mode: SessionPermissionMode;
+    }
+  | { type: "CYCLE_SESSION_PERMISSION_MODE" }
   | { type: "SEND_MESSAGE"; text: string; requestId: string }
   | {
       type: "SESSION_CREATED";
@@ -131,6 +142,7 @@ function reducer(state: AppState, action: Action): AppState {
         activeSessionMeta: null,
         messages: [],
         permissionRequests: [],
+        draftPermissionMode: "default",
         activeRequestIds: new Set(),
       };
 
@@ -218,6 +230,43 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, permissionRequests: next };
     }
 
+    case "SET_SESSION_PERMISSION_MODE":
+      if (!action.sessionId) {
+        return { ...state, draftPermissionMode: action.mode };
+      }
+      return {
+        ...state,
+        sessionPermissionModes: {
+          ...state.sessionPermissionModes,
+          [action.sessionId]: action.mode,
+        },
+      };
+
+    case "CYCLE_SESSION_PERMISSION_MODE": {
+      const modeOrder: SessionPermissionMode[] = [
+        "default",
+        "plan",
+        "bypassPermissions",
+      ];
+      const currentMode: SessionPermissionMode = state.activeSessionId
+        ? (state.sessionPermissionModes[state.activeSessionId] ?? "default")
+        : state.draftPermissionMode;
+      const currentIndex = modeOrder.indexOf(currentMode);
+      const nextMode = modeOrder[(currentIndex + 1) % modeOrder.length] ?? "default";
+
+      if (!state.activeSessionId) {
+        return { ...state, draftPermissionMode: nextMode };
+      }
+
+      return {
+        ...state,
+        sessionPermissionModes: {
+          ...state.sessionPermissionModes,
+          [state.activeSessionId]: nextMode,
+        },
+      };
+    }
+
     case "SEND_MESSAGE": {
       const newRequestIds = new Set(state.activeRequestIds);
       newRequestIds.add(action.requestId);
@@ -232,12 +281,18 @@ function reducer(state: AppState, action: Action): AppState {
       };
     }
 
-    case "SESSION_CREATED":
+    case "SESSION_CREATED": {
+      const sessionPermissionModes = { ...state.sessionPermissionModes };
+      if (state.activeSessionId === null) {
+        sessionPermissionModes[action.sessionId] = state.draftPermissionMode;
+      }
       return {
         ...state,
         activeSessionId: action.sessionId,
         activeEncodedCwd: action.encodedCwd,
+        sessionPermissionModes,
       };
+    }
 
     case "SESSION_STATE": {
       const updates: Partial<AppState> = {};
@@ -946,6 +1001,9 @@ export default function App() {
       dispatch({ type: "SEND_MESSAGE", text, requestId });
 
       const current = stateRef.current;
+      const permissionMode = current.activeSessionId
+        ? (current.sessionPermissionModes[current.activeSessionId] ?? "default")
+        : current.draftPermissionMode;
       if (current.activeSessionId && current.activeEncodedCwd) {
         send({
           type: "session.send",
@@ -953,12 +1011,14 @@ export default function App() {
           session_id: current.activeSessionId,
           encoded_cwd: current.activeEncodedCwd,
           prompt: text,
+          permission_mode: permissionMode,
         });
       } else {
         const createMsg: WsSessionCreateMessage = {
           type: "session.create",
           request_id: requestId,
           prompt: text,
+          permission_mode: permissionMode,
         };
         if (pendingRepoSelection) {
           if (pendingRepoSelection.repoUrl) createMsg.repo_url = pendingRepoSelection.repoUrl;
@@ -1031,6 +1091,21 @@ export default function App() {
     },
     [send],
   );
+
+  const handleSessionPermissionModeChange = useCallback(
+    (mode: SessionPermissionMode) => {
+      dispatch({
+        type: "SET_SESSION_PERMISSION_MODE",
+        sessionId: stateRef.current.activeSessionId,
+        mode,
+      });
+    },
+    [],
+  );
+
+  const handleCycleSessionPermissionMode = useCallback(() => {
+    dispatch({ type: "CYCLE_SESSION_PERMISSION_MODE" });
+  }, []);
 
   const handleOpenTerminal = useCallback(
     (index: number) => {
@@ -1198,6 +1273,10 @@ export default function App() {
     }
   }
 
+  const sessionPermissionMode: SessionPermissionMode = state.activeSessionId
+    ? (state.sessionPermissionModes[state.activeSessionId] ?? "default")
+    : state.draftPermissionMode;
+
   return (
     <div className="h-dvh flex flex-col overflow-hidden">
       <Header
@@ -1240,8 +1319,11 @@ export default function App() {
           historyLoading={sessionHistoryLoading}
           permissionRequests={state.permissionRequests}
           activeRequestIds={state.activeRequestIds}
+          sessionPermissionMode={sessionPermissionMode}
           onSend={handleSendMessage}
           onFileSearch={handleFileSearch}
+          onPermissionModeChange={handleSessionPermissionModeChange}
+          onCyclePermissionMode={handleCycleSessionPermissionMode}
           onRespondPermission={handlePermissionResponse}
           fileSuggestions={fileSuggestions}
           fileIndexing={fileSearchIndexing}

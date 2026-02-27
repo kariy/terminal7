@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+const SessionPermissionModeSchema = z.enum([
+	"default",
+	"plan",
+	"bypassPermissions",
+]);
+
 export const WsSessionCreateSchema = z.object({
 	type: z.literal("session.create"),
 	request_id: z.string().min(1).optional(),
@@ -9,6 +15,7 @@ export const WsSessionCreateSchema = z.object({
 	repo_url: z.string().url().optional(),
 	repo_id: z.string().min(1).optional(),
 	branch: z.string().min(1).optional(),
+	permission_mode: SessionPermissionModeSchema.optional(),
 });
 
 const SessionPromptBaseSchema = z.object({
@@ -17,6 +24,7 @@ const SessionPromptBaseSchema = z.object({
 	encoded_cwd: z.string().min(1),
 	prompt: z.string().min(1),
 	cwd: z.string().min(1).optional(),
+	permission_mode: SessionPermissionModeSchema.optional(),
 });
 
 export const WsSessionResumeSchema = SessionPromptBaseSchema.extend({
@@ -53,7 +61,7 @@ export const WsFileSearchSchema = z.object({
 	limit: z.number().int().min(1).max(50).optional(),
 });
 
-const PermissionModeSchema = z.enum([
+const PermissionRespondModeSchema = z.enum([
 	"default",
 	"acceptEdits",
 	"bypassPermissions",
@@ -64,7 +72,7 @@ export const WsPermissionRespondSchema = z.object({
 	request_id: z.string().min(1),
 	decision: z.enum(["allow", "deny"]),
 	message: z.string().max(4000).optional(),
-	mode: PermissionModeSchema.optional(),
+	mode: PermissionRespondModeSchema.optional(),
 });
 
 export const WsClientMessageSchema = z.discriminatedUnion("type", [

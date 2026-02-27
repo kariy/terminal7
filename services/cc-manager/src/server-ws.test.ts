@@ -192,6 +192,27 @@ describe("session.create flow", () => {
 			created.encoded_cwd,
 		);
 	});
+
+	test("forwards permission_mode from session.create to ClaudeService", async () => {
+		await connect();
+		await ws.nextMessage(); // consume hello
+
+		ws.send({
+			type: "session.create",
+			request_id: "req-mode-create",
+			prompt: "Use plan mode",
+			cwd: "/tmp",
+			permission_mode: "plan",
+		});
+
+		await ws.collectUntil(
+			(msg) => (msg as Record<string, unknown>).type === "stream.done",
+		);
+
+		const lastCall = ctx.claudeService.calls[ctx.claudeService.calls.length - 1];
+		expect(lastCall).toBeDefined();
+		expect(lastCall?.permissionMode).toBe("plan");
+	});
 });
 
 describe("session.resume/send flow", () => {
@@ -269,6 +290,39 @@ describe("session.resume/send flow", () => {
 		expect(error.type).toBe("error");
 		expect(error.code).toBe("session_not_found");
 		expect(error.request_id).toBe("req-404");
+	});
+
+	test("forwards permission_mode from session.send to ClaudeService", async () => {
+		const sessionId = "sess-send-mode";
+		const encodedCwd = "-tmp";
+		ctx.repository.upsertSessionMetadata({
+			sessionId,
+			encodedCwd,
+			cwd: "/tmp",
+			title: "Send mode test",
+			source: "db",
+		});
+
+		await connect();
+		await ws.nextMessage(); // consume hello
+
+		ws.send({
+			type: "session.send",
+			request_id: "req-send-mode",
+			session_id: sessionId,
+			encoded_cwd: encodedCwd,
+			prompt: "Continue",
+			permission_mode: "bypassPermissions",
+		});
+
+		await ws.collectUntil(
+			(msg) => (msg as Record<string, unknown>).type === "stream.done",
+		);
+
+		const lastCall = ctx.claudeService.calls[ctx.claudeService.calls.length - 1];
+		expect(lastCall).toBeDefined();
+		expect(lastCall?.permissionMode).toBe("bypassPermissions");
+		expect(lastCall?.resumeSessionId).toBe(sessionId);
 	});
 });
 

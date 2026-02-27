@@ -5,12 +5,14 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 
 type ExitPlanModePermissionMode = "default" | "acceptEdits" | "bypassPermissions";
+type SessionPermissionMode = "default" | "plan" | "bypassPermissions";
 
 export interface StreamPromptArgs {
 	requestId: string;
 	prompt: string;
 	cwd?: string;
 	resumeSessionId?: string;
+	permissionMode?: SessionPermissionMode;
 	allowedTools: string[];
 	onSessionId: (sessionId: string) => void;
 	onMessage: (message: SDKMessage) => void;
@@ -54,6 +56,10 @@ export class ClaudeService implements ClaudeServiceLike {
 				includePartialMessages: true,
 				...(args.cwd && { cwd: args.cwd }),
 				...(args.resumeSessionId && { resume: args.resumeSessionId }),
+				...(args.permissionMode && { permissionMode: args.permissionMode }),
+				...(args.permissionMode === "bypassPermissions" && {
+					allowDangerouslySkipPermissions: true,
+				}),
 				...(args.onPermissionRequest && {
 					canUseTool: async (
 						toolName,

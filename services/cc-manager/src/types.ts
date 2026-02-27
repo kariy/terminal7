@@ -268,6 +268,8 @@ export interface HealthResponse {
 	time: string;
 }
 
+export type SessionPermissionMode = "default" | "plan" | "bypassPermissions";
+
 // ── WebSocket connection state ───────────────────────────────────
 
 import type { TerminalHandle } from "./terminal-service";
@@ -306,4 +308,5 @@ export interface HandlePromptParams {
 	repoId?: string;
 	worktreePath?: string;
 	branch?: string;
+	permissionMode?: SessionPermissionMode;
 }

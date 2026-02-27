@@ -33,6 +33,7 @@ export function createPromptHandler(
 			prompt: params.prompt,
 			cwd: params.cwd,
 			resumeSessionId: params.resumeSessionId,
+			permissionMode: params.permissionMode,
 			allowedTools: app.config.allowedTools,
 			...(requestToolPermission && {
 				onPermissionRequest: (request: ToolPermissionRequest) =>

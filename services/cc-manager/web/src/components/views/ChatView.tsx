@@ -3,7 +3,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { TypingIndicator } from "@/components/chat/TypingIndicator";
 import { ChatInput, type FileSuggestion } from "@/components/chat/ChatInput";
-import type { ChatMessage, PermissionMode, ToolPermissionRequestState } from "@/types/chat";
+import type {
+  ChatMessage,
+  PermissionMode,
+  SessionPermissionMode,
+  ToolPermissionRequestState,
+} from "@/types/chat";
 
 interface Turn {
   userMessage: ChatMessage | null;
@@ -35,8 +40,11 @@ interface ChatViewProps {
   historyLoading: boolean;
   permissionRequests: ToolPermissionRequestState[];
   activeRequestIds: Set<string>;
+  sessionPermissionMode: SessionPermissionMode;
   onSend: (text: string) => void;
   onFileSearch: (query: string | null) => void;
+  onPermissionModeChange: (mode: SessionPermissionMode) => void;
+  onCyclePermissionMode: () => void;
   onRespondPermission: (
     permissionRequestId: string,
     decision: "allow" | "deny",
@@ -52,8 +60,11 @@ export function ChatView({
   historyLoading,
   permissionRequests,
   activeRequestIds,
+  sessionPermissionMode,
   onSend,
   onFileSearch,
+  onPermissionModeChange,
+  onCyclePermissionMode,
   onRespondPermission,
   fileSuggestions,
   fileIndexing,
@@ -71,6 +82,11 @@ export function ChatView({
 
   const isStreaming = activeRequestIds.size > 0;
   const showHistorySkeleton = historyLoading && messages.length === 0 && !isStreaming;
+  const modeOptions: Array<{ value: SessionPermissionMode; label: string }> = [
+    { value: "default", label: "Default" },
+    { value: "plan", label: "Plan" },
+    { value: "bypassPermissions", label: "Bypass" },
+  ];
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -123,9 +139,45 @@ export function ChatView({
           {showHistorySkeleton && <HistorySkeletonBubble />}
         </div>
       </ScrollArea>
+      <div className="px-3 pt-2 pb-0.5 bg-background">
+        <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-secondary/25 p-1">
+          <span className="px-2 text-[11px] font-medium text-muted-foreground">
+            Mode
+          </span>
+          {modeOptions.map((option) => {
+            const selected = sessionPermissionMode === option.value;
+            const planClasses = selected
+              ? "bg-green-100 text-green-900 hover:bg-green-100"
+              : "text-green-800/80 hover:text-green-900 hover:bg-green-100/60";
+            const bypassClasses = selected
+              ? "bg-red-100 text-red-900 hover:bg-red-100"
+              : "text-red-800/80 hover:text-red-900 hover:bg-red-100/60";
+            const defaultClasses = selected
+              ? "bg-secondary text-foreground"
+              : "text-muted-foreground hover:text-foreground hover:bg-secondary/60";
+            const colorClasses =
+              option.value === "plan"
+                ? planClasses
+                : option.value === "bypassPermissions"
+                  ? bypassClasses
+                  : defaultClasses;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${colorClasses}`}
+                onClick={() => onPermissionModeChange(option.value)}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
       <ChatInput
         onSend={onSend}
         onFileSearch={onFileSearch}
+        onCyclePermissionMode={onCyclePermissionMode}
         fileSuggestions={fileSuggestions}
         fileIndexing={fileIndexing}
         disabled={isStreaming}

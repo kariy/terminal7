@@ -25,6 +25,7 @@ interface ActiveAtToken {
 interface ChatInputProps {
   onSend: (text: string) => void;
   onFileSearch: (query: string | null) => void;
+  onCyclePermissionMode: () => void;
   fileSuggestions: FileSuggestion[];
   fileIndexing: boolean;
   disabled?: boolean;
@@ -66,6 +67,7 @@ function parseActiveAtToken(text: string, caret: number): ActiveAtToken | null {
 export function ChatInput({
   onSend,
   onFileSearch,
+  onCyclePermissionMode,
   fileSuggestions,
   fileIndexing,
   disabled,
@@ -139,6 +141,12 @@ export function ChatInput({
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Tab" && e.shiftKey) {
+        e.preventDefault();
+        onCyclePermissionMode();
+        return;
+      }
+
       const canSelectSuggestion = !!activeToken && fileSuggestions.length > 0;
       const activeSuggestionIndex = fileSuggestions.length === 0
         ? 0
@@ -181,6 +189,7 @@ export function ChatInput({
       fileSuggestions.length,
       handleSend,
       insertSuggestion,
+      onCyclePermissionMode,
       onFileSearch,
       selectedIndex,
     ],

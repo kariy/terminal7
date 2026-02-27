@@ -133,6 +133,7 @@ export interface WsSessionCreateMessage {
   repo_url?: string;
   repo_id?: string;
   branch?: string;
+  permission_mode?: WsSessionPermissionMode;
 }
 
 export interface WsSessionSendMessage {
@@ -141,6 +142,7 @@ export interface WsSessionSendMessage {
   session_id: string;
   encoded_cwd: string;
   prompt: string;
+  permission_mode?: WsSessionPermissionMode;
 }
 
 export interface WsSessionStopMessage {
@@ -168,6 +170,11 @@ export interface WsFileSearchMessage {
   query: string;
   limit?: number;
 }
+
+export type WsSessionPermissionMode =
+  | "default"
+  | "plan"
+  | "bypassPermissions";
 
 export type WsPermissionMode = "default" | "acceptEdits" | "bypassPermissions";
 

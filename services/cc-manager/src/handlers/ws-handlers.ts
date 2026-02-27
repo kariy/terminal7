@@ -188,6 +188,7 @@ export function createWsHandlers(app: App) {
 			repoId,
 			worktreePath,
 			branch,
+			permissionMode: message.permission_mode,
 		});
 	}
 
@@ -241,6 +242,7 @@ export function createWsHandlers(app: App) {
 			prompt: message.prompt,
 			encodedCwd: message.encoded_cwd,
 			resumeSessionId: message.session_id,
+			permissionMode: message.permission_mode,
 		});
 	}
 
