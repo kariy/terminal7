@@ -176,7 +176,7 @@ export function RepoSelectionDialog({ onSelect, onCancel }: RepoSelectionDialogP
               <div className="relative h-7 w-full overflow-hidden rounded-md [clip-path:inset(0)]">
                 <div
                   ref={presetPillsContainerRef}
-                  className="flex h-7 w-full items-stretch gap-2 overflow-x-auto overflow-y-hidden"
+                  className="hide-scrollbar flex h-7 w-full items-stretch gap-2 overflow-x-auto overflow-y-hidden"
                   onWheel={handlePresetPillsWheel}
                   onScroll={updatePresetShadows}
                 >
