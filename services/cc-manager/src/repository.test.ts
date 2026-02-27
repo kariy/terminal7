@@ -70,4 +70,52 @@ describe("ManagerRepository", () => {
 		repo.close();
 	});
 
+	test("listSessionsPage paginates with stable keyset ordering", () => {
+		const repo = createRepository();
+		const ts = 2_000;
+
+		repo.upsertSessionMetadata({
+			sessionId: "a",
+			encodedCwd: "-1",
+			cwd: "/a1",
+			title: "a1",
+			lastActivityAt: ts,
+			source: "db",
+		});
+		repo.upsertSessionMetadata({
+			sessionId: "a",
+			encodedCwd: "-2",
+			cwd: "/a2",
+			title: "a2",
+			lastActivityAt: ts,
+			source: "db",
+		});
+		repo.upsertSessionMetadata({
+			sessionId: "b",
+			encodedCwd: "-1",
+			cwd: "/b1",
+			title: "b1",
+			lastActivityAt: ts,
+			source: "db",
+		});
+
+		const first = repo.listSessionsPage({ limit: 2 });
+		expect(first.items.length).toBe(2);
+		expect(first.items[0]?.sessionId).toBe("b");
+		expect(first.items[0]?.encodedCwd).toBe("-1");
+		expect(first.items[1]?.sessionId).toBe("a");
+		expect(first.items[1]?.encodedCwd).toBe("-2");
+		expect(first.nextCursor).toBeDefined();
+
+		const second = repo.listSessionsPage({
+			limit: 2,
+			cursor: first.nextCursor ?? undefined,
+		});
+		expect(second.items.length).toBe(1);
+		expect(second.items[0]?.sessionId).toBe("a");
+		expect(second.items[0]?.encodedCwd).toBe("-1");
+		expect(second.nextCursor).toBeNull();
+		repo.close();
+	});
+
 });

@@ -221,8 +221,15 @@ export interface SessionListItem {
 	branch?: string;
 }
 
+export interface SessionListCursor {
+	lastActivityAt: number;
+	sessionId: string;
+	encodedCwd: string;
+}
+
 export interface SessionListResponse {
-	sessions: SessionListItem[];
+	items: SessionListItem[];
+	next_cursor: string | null;
 }
 
 export interface SessionHistoryResponse {

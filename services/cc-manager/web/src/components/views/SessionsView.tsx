@@ -1,3 +1,4 @@
+import { useCallback, type UIEvent } from "react";
 import { Plus, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -11,6 +12,9 @@ interface SessionsViewProps {
   onOpenSession: (index: number) => void;
   onNewSession: () => void;
   onOpenTerminal?: (index: number) => void;
+  onLoadMore: () => void;
+  hasMore: boolean;
+  loadingMore: boolean;
 }
 
 export function SessionsView({
@@ -19,7 +23,22 @@ export function SessionsView({
   onOpenSession,
   onNewSession,
   onOpenTerminal,
+  onLoadMore,
+  hasMore,
+  loadingMore,
 }: SessionsViewProps) {
+  const handleScroll = useCallback(
+    (event: UIEvent<HTMLDivElement>) => {
+      if (!hasMore || loadingMore) return;
+      const target = event.currentTarget;
+      const remaining = target.scrollHeight - target.scrollTop - target.clientHeight;
+      if (remaining < 200) {
+        onLoadMore();
+      }
+    },
+    [hasMore, loadingMore, onLoadMore],
+  );
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="flex items-center px-4 py-4 gap-2.5 shrink-0">
@@ -34,18 +53,28 @@ export function SessionsView({
           <RotateCw className="h-4 w-4" />
         </Button>
       </div>
-      <ScrollArea className="flex-1 px-4 pb-24">
+      <ScrollArea
+        className="flex-1 px-4 pb-24"
+        onScroll={handleScroll}
+      >
         {sessions.length === 0 ? (
           <EmptyState />
         ) : (
-          sessions.map((session, i) => (
-            <SessionCard
-              key={session.session_id + session.encoded_cwd}
-              session={session}
-              onClick={() => onOpenSession(i)}
-              onOpenTerminal={onOpenTerminal ? () => onOpenTerminal(i) : undefined}
-            />
-          ))
+          <>
+            {sessions.map((session, i) => (
+              <SessionCard
+                key={session.session_id + session.encoded_cwd}
+                session={session}
+                onClick={() => onOpenSession(i)}
+                onOpenTerminal={onOpenTerminal ? () => onOpenTerminal(i) : undefined}
+              />
+            ))}
+            {loadingMore && (
+              <div className="py-4 text-center text-sm text-muted-foreground">
+                Loading more sessions...
+              </div>
+            )}
+          </>
         )}
       </ScrollArea>
       <Button

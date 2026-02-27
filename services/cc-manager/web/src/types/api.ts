@@ -28,7 +28,8 @@ export interface RepositoryListResponse {
 }
 
 export interface SessionListResponse {
-  sessions: SessionListItem[];
+  items: SessionListItem[];
+  next_cursor: string | null;
 }
 
 export interface SshConnectionItem {
