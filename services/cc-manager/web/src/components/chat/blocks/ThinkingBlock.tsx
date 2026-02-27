@@ -12,7 +12,7 @@ export function ThinkingBlock({ text, isStreaming }: ThinkingBlockProps) {
   if (!text && !isStreaming) return null;
 
   return (
-    <div className="my-1">
+    <div className="my-1 rounded-md border border-border/70 bg-secondary/40 px-2 py-1">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -23,7 +23,7 @@ export function ThinkingBlock({ text, isStreaming }: ThinkingBlockProps) {
         <span className="italic">Thinking{isStreaming ? "..." : ""}</span>
       </button>
       {expanded && (
-        <div className="ml-[22px] mt-1 text-xs text-muted-foreground italic whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
+        <div className="ml-[22px] mt-1 pb-0.5 text-xs text-muted-foreground italic whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
           {text}
         </div>
       )}
