@@ -85,7 +85,7 @@ export function ToolCallBlock({
       <button
         type="button"
         onClick={handleToggle}
-        className="w-full flex items-center gap-2 px-3 py-2 text-xs hover:bg-secondary/50 transition-colors"
+        className="w-full flex items-center gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-secondary/50 transition-colors"
       >
         {expanded ? (
           <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
