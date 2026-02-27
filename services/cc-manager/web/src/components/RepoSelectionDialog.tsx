@@ -168,7 +168,7 @@ export function RepoSelectionDialog({ onSelect, onCancel }: RepoSelectionDialogP
           </p>
         </CardHeader>
         <CardContent className="space-y-4 overflow-y-auto flex-1">
-          <div className="space-y-4 rounded-lg border border-border/70 bg-secondary/40 p-3">
+          <div className="space-y-2 rounded-lg border border-border/70 bg-secondary/40 p-3">
             <div className="space-y-3">
               <label className="text-xs font-medium text-muted-foreground block">
                 Repositories
