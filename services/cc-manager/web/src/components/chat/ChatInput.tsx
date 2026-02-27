@@ -30,6 +30,12 @@ interface ChatInputProps {
   disabled?: boolean;
 }
 
+function formatAtFileRefs(text: string): string {
+  return text.replace(/(^|\s)@([^\s]+)/g, (_full, prefix: string, path: string) => {
+    return `${prefix}file:${path}`;
+  });
+}
+
 function parseActiveAtToken(text: string, caret: number): ActiveAtToken | null {
   const prefix = text.slice(0, caret);
   const atIndex = prefix.lastIndexOf("@");
@@ -98,7 +104,7 @@ export function ChatInput({
   const handleSend = useCallback(() => {
     const text = value.trim();
     if (!text) return;
-    onSend(text);
+    onSend(formatAtFileRefs(text));
     setValue("");
     setActiveToken(null);
     onFileSearch(null);
