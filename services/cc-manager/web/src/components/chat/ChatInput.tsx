@@ -143,6 +143,7 @@ export function ChatInput({
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === "Tab" && e.shiftKey) {
         e.preventDefault();
+        e.stopPropagation();
         onCyclePermissionMode();
         return;
       }

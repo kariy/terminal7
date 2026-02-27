@@ -80,6 +80,18 @@ export function ChatView({
     return () => cancelAnimationFrame(frame);
   }, [messages, activeRequestIds]);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key !== "Tab" || !event.shiftKey) return;
+      event.preventDefault();
+      onCyclePermissionMode();
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onCyclePermissionMode]);
+
   const isStreaming = activeRequestIds.size > 0;
   const showHistorySkeleton = historyLoading && messages.length === 0 && !isStreaming;
   const modeOptions: Array<{ value: SessionPermissionMode; label: string }> = [
