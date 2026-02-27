@@ -80,16 +80,18 @@ export function RepoSelectionDialog({ onSelect, onCancel }: RepoSelectionDialogP
             <label className="text-xs font-medium text-muted-foreground block">
               Repositories
             </label>
-            {PRESET_REPOS.map((preset) => (
-              <button
-                key={`${preset.owner}/${preset.name}`}
-                type="button"
-                onClick={() => handleSelectPreset(preset)}
-                className="w-full text-left rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <div className="font-medium">{preset.owner}/{preset.name}</div>
-              </button>
-            ))}
+            <div className="flex flex-wrap gap-2">
+              {PRESET_REPOS.map((preset) => (
+                <button
+                  key={`${preset.owner}/${preset.name}`}
+                  type="button"
+                  onClick={() => handleSelectPreset(preset)}
+                  className="inline-flex cursor-pointer items-center rounded-full border border-input bg-background px-3 py-1.5 text-xs font-medium hover:bg-accent hover:text-accent-foreground transition-colors"
+                >
+                  {preset.owner}/{preset.name}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Previously cloned repos (excluding presets) */}
