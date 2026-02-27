@@ -597,10 +597,18 @@ export default function App() {
   const [fileSuggestions, setFileSuggestions] = useState<WsFileSearchEntry[]>([]);
   const [fileSearchIndexing, setFileSearchIndexing] = useState(false);
   const fileSearchQueryRef = useRef<string | null>(null);
+  const historyLoadIdRef = useRef(0);
+  const [sessionHistoryLoading, setSessionHistoryLoading] = useState(false);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sessionsNextCursor, setSessionsNextCursor] = useState<string | null>(null);
   const [sessionsLoadingMore, setSessionsLoadingMore] = useState(false);
 
   const loadSessionsFirstPage = useCallback((refresh: boolean) => {
+    if (stateRef.current.sessions.length === 0) {
+      setSessionsLoading(true);
+    }
+    setSessionsLoadingMore(false);
+
     return fetchSessions({ refresh, limit: SESSIONS_PAGE_SIZE })
       .then((data) => {
         dispatch({
@@ -609,6 +617,9 @@ export default function App() {
         });
         setSessionsNextCursor(data.next_cursor);
         return data;
+      })
+      .finally(() => {
+        setSessionsLoading(false);
       });
   }, []);
 
@@ -630,6 +641,41 @@ export default function App() {
       });
   }, [sessionsLoadingMore, sessionsNextCursor]);
 
+  const loadSessionHistory = useCallback(
+    (sessionId: string, encodedCwd?: string | null) => {
+      const loadId = ++historyLoadIdRef.current;
+      setSessionHistoryLoading(true);
+
+      const request = encodedCwd
+        ? fetchHistory(sessionId, encodedCwd)
+        : fetchHistory(sessionId);
+
+      return request
+        .then((hist) => {
+          if (stateRef.current.activeSessionId !== sessionId) {
+            return hist;
+          }
+
+          dispatch({
+            type: "SESSION_STATE",
+            encodedCwd: hist.encoded_cwd,
+          });
+          dispatch({
+            type: "SET_HISTORY",
+            sessionId,
+            messages: mapHistoryToChat(hist.messages),
+          });
+          return hist;
+        })
+        .finally(() => {
+          if (historyLoadIdRef.current === loadId) {
+            setSessionHistoryLoading(false);
+          }
+        });
+    },
+    [],
+  );
+
   const handleWsMessage = useCallback((msg: WsServerMessage) => {
     switch (msg.type) {
       case "hello":
@@ -649,32 +695,8 @@ export default function App() {
                   sessionId: route.sessionId!,
                   encodedCwd: s?.encoded_cwd ?? null,
                 });
-                if (s?.encoded_cwd) {
-                  fetchHistory(route.sessionId!, s.encoded_cwd).then(
-                    (hist) => {
-                      dispatch({
-                        type: "SET_HISTORY",
-                        sessionId: route.sessionId!,
-                        messages: mapHistoryToChat(hist.messages),
-                      });
-                    },
-                  );
-                } else {
-                  fetchHistory(route.sessionId!)
-                    .then((hist) => {
-                      dispatch({
-                        type: "SESSION_STATE",
-                        sessionId: route.sessionId!,
-                        encodedCwd: hist.encoded_cwd,
-                      });
-                      dispatch({
-                        type: "SET_HISTORY",
-                        sessionId: route.sessionId!,
-                        messages: mapHistoryToChat(hist.messages),
-                      });
-                    })
-                    .catch(() => {});
-                }
+                loadSessionHistory(route.sessionId!, s?.encoded_cwd)
+                  .catch(() => {});
               } else if (route.view === "ssh") {
                 dispatch({ type: "SET_VIEW", view: "ssh" });
                 fetchSshConnections()
@@ -700,6 +722,8 @@ export default function App() {
         break;
 
       case "session.created":
+        historyLoadIdRef.current += 1;
+        setSessionHistoryLoading(false);
         dispatch({
           type: "SESSION_CREATED",
           sessionId: msg.session_id,
@@ -803,7 +827,7 @@ export default function App() {
         break;
       }
     }
-  }, [loadSessionsFirstPage]);
+  }, [loadSessionHistory, loadSessionsFirstPage]);
 
   const { status, send, disconnect } = useWebSocket({
     onMessage: handleWsMessage,
@@ -851,30 +875,8 @@ export default function App() {
           sessionId: route.sessionId,
           encodedCwd: s?.encoded_cwd ?? null,
         });
-        if (s?.encoded_cwd) {
-          fetchHistory(route.sessionId, s.encoded_cwd).then((hist) => {
-            dispatch({
-              type: "SET_HISTORY",
-              sessionId: route.sessionId!,
-              messages: mapHistoryToChat(hist.messages),
-            });
-          });
-        } else {
-          fetchHistory(route.sessionId)
-            .then((hist) => {
-              dispatch({
-                type: "SESSION_STATE",
-                sessionId: route.sessionId!,
-                encodedCwd: hist.encoded_cwd,
-              });
-              dispatch({
-                type: "SET_HISTORY",
-                sessionId: route.sessionId!,
-                messages: mapHistoryToChat(hist.messages),
-              });
-            })
-            .catch(() => {});
-        }
+        loadSessionHistory(route.sessionId, s?.encoded_cwd)
+          .catch(() => {});
       } else if (route.view === "ssh") {
         dispatch({ type: "SET_VIEW", view: "ssh" });
         fetchSshConnections()
@@ -886,7 +888,7 @@ export default function App() {
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [status]);
+  }, [loadSessionHistory, status]);
 
   // ── Handlers ──
 
@@ -905,20 +907,15 @@ export default function App() {
         encodedCwd: s.encoded_cwd,
       });
       pushUrl("/sessions/" + encodeURIComponent(s.session_id));
-      if (s.encoded_cwd) {
-        fetchHistory(s.session_id, s.encoded_cwd).then((hist) => {
-          dispatch({
-            type: "SET_HISTORY",
-            sessionId: s.session_id,
-            messages: mapHistoryToChat(hist.messages),
-          });
-        });
-      }
+      loadSessionHistory(s.session_id, s.encoded_cwd)
+        .catch(() => {});
     },
-    [state.sessions],
+    [loadSessionHistory, state.sessions],
   );
 
   const handleNewSession = useCallback(() => {
+    historyLoadIdRef.current += 1;
+    setSessionHistoryLoading(false);
     setShowRepoDialog(true);
   }, []);
 
@@ -933,6 +930,8 @@ export default function App() {
   }, []);
 
   const handleReturnToSessions = useCallback(() => {
+    historyLoadIdRef.current += 1;
+    setSessionHistoryLoading(false);
     dispatch({ type: "RETURN_TO_SESSIONS" });
     pushUrl("/");
     loadSessionsFirstPage(false)
@@ -1216,6 +1215,7 @@ export default function App() {
       {state.view === "sessions" && (
         <SessionsView
           sessions={state.sessions}
+          loading={sessionsLoading}
           onRefresh={handleRefresh}
           onLoadMore={loadMoreSessions}
           hasMore={sessionsNextCursor !== null}
@@ -1237,6 +1237,7 @@ export default function App() {
       {state.view === "chat" && (
         <ChatView
           messages={state.messages}
+          historyLoading={sessionHistoryLoading}
           permissionRequests={state.permissionRequests}
           activeRequestIds={state.activeRequestIds}
           onSend={handleSendMessage}

@@ -32,6 +32,7 @@ function groupIntoTurns(messages: ChatMessage[]): Turn[] {
 
 interface ChatViewProps {
   messages: ChatMessage[];
+  historyLoading: boolean;
   permissionRequests: ToolPermissionRequestState[];
   activeRequestIds: Set<string>;
   onSend: (text: string) => void;
@@ -48,6 +49,7 @@ interface ChatViewProps {
 
 export function ChatView({
   messages,
+  historyLoading,
   permissionRequests,
   activeRequestIds,
   onSend,
@@ -68,6 +70,7 @@ export function ChatView({
   }, [messages, activeRequestIds]);
 
   const isStreaming = activeRequestIds.size > 0;
+  const showHistorySkeleton = historyLoading && messages.length === 0 && !isStreaming;
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -117,6 +120,7 @@ export function ChatView({
               </div>
             );
           })}
+          {showHistorySkeleton && <HistorySkeletonBubble />}
         </div>
       </ScrollArea>
       <ChatInput
@@ -126,6 +130,20 @@ export function ChatView({
         fileIndexing={fileIndexing}
         disabled={isStreaming}
       />
+    </div>
+  );
+}
+
+function HistorySkeletonBubble() {
+  return (
+    <div className="flex justify-start">
+      <div className="max-w-[90%] rounded-2xl rounded-bl-sm border border-border bg-card px-3.5 py-2.5">
+        <div className="animate-pulse">
+          <div className="h-3.5 w-64 max-w-[70vw] rounded bg-muted" />
+          <div className="mt-2 h-3.5 w-52 max-w-[55vw] rounded bg-muted" />
+          <div className="mt-2 h-3.5 w-40 max-w-[40vw] rounded bg-muted" />
+        </div>
+      </div>
     </div>
   );
 }

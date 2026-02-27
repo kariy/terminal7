@@ -8,6 +8,7 @@ import type { SessionListItem } from "@/types/api";
 
 interface SessionsViewProps {
   sessions: SessionListItem[];
+  loading: boolean;
   onRefresh: () => void;
   onOpenSession: (index: number) => void;
   onNewSession: () => void;
@@ -19,6 +20,7 @@ interface SessionsViewProps {
 
 export function SessionsView({
   sessions,
+  loading,
   onRefresh,
   onOpenSession,
   onNewSession,
@@ -47,6 +49,7 @@ export function SessionsView({
           variant="ghost"
           size="icon"
           className="rounded-full"
+          disabled={loading}
           onClick={onRefresh}
           title="Refresh"
         >
@@ -57,7 +60,9 @@ export function SessionsView({
         className="flex-1 px-4 pb-24"
         onScroll={handleScroll}
       >
-        {sessions.length === 0 ? (
+        {loading ? (
+          <SessionsSkeleton />
+        ) : sessions.length === 0 ? (
           <EmptyState />
         ) : (
           <>
@@ -84,5 +89,24 @@ export function SessionsView({
         <Plus className="h-7 w-7" />
       </Button>
     </div>
+  );
+}
+
+function SessionsSkeleton() {
+  return (
+    <>
+      {Array.from({ length: 6 }).map((_, index) => (
+        <div
+          key={index}
+          className="mb-2.5 rounded-lg border bg-card p-3"
+        >
+          <div className="animate-pulse">
+            <div className="h-4 w-2/3 rounded bg-muted" />
+            <div className="mt-2 h-3 w-full rounded bg-muted" />
+            <div className="mt-2 h-3 w-1/2 rounded bg-muted" />
+          </div>
+        </div>
+      ))}
+    </>
   );
 }
