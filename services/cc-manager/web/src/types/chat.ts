@@ -16,6 +16,19 @@ export interface ContentBlockState {
   durationSeconds?: number;
 }
 
+export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions";
+
+export interface ToolPermissionRequestState {
+  permissionRequestId: string;
+  promptRequestId: string;
+  toolName: string;
+  toolUseId: string;
+  toolInput: Record<string, unknown>;
+  status: "pending" | "approved" | "rejected";
+  message?: string;
+  mode?: PermissionMode;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   requestId: string | null;

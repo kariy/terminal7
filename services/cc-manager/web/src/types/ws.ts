@@ -101,6 +101,15 @@ export interface WsFileSearchResultMessage {
   truncated?: boolean;
 }
 
+export interface WsPermissionRequestMessage {
+  type: "permission.request";
+  request_id: string;
+  prompt_request_id: string;
+  tool_name: string;
+  tool_use_id: string;
+  tool_input: Record<string, unknown>;
+}
+
 export type WsServerMessage =
   | WsHelloMessage
   | WsSessionCreatedMessage
@@ -110,7 +119,8 @@ export type WsServerMessage =
   | WsErrorMessage
   | WsPongMessage
   | WsRepoListMessage
-  | WsFileSearchResultMessage;
+  | WsFileSearchResultMessage
+  | WsPermissionRequestMessage;
 
 // Client → Server messages
 
@@ -159,6 +169,16 @@ export interface WsFileSearchMessage {
   limit?: number;
 }
 
+export type WsPermissionMode = "default" | "acceptEdits" | "bypassPermissions";
+
+export interface WsPermissionRespondMessage {
+  type: "permission.respond";
+  request_id: string;
+  decision: "allow" | "deny";
+  message?: string;
+  mode?: WsPermissionMode;
+}
+
 export type WsClientMessage =
   | WsSessionCreateMessage
   | WsSessionSendMessage
@@ -166,4 +186,5 @@ export type WsClientMessage =
   | WsRefreshIndexMessage
   | WsPingMessage
   | WsRepoListRequestMessage
-  | WsFileSearchMessage;
+  | WsFileSearchMessage
+  | WsPermissionRespondMessage;

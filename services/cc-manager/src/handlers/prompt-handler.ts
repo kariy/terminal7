@@ -1,11 +1,21 @@
 import type { App } from "../app";
+import type {
+	ToolPermissionDecision,
+	ToolPermissionRequest,
+} from "../claude-service";
 import type { HandlePromptParams, WsSessionState, WsSessionMeta } from "../types";
 import { toWsSessionMeta } from "../types";
 import { nowMs, truncate } from "../utils";
 import { wsError, wsSend } from "../ws-utils";
 import { log } from "../logger";
 
-export function createPromptHandler(app: App) {
+export function createPromptHandler(
+	app: App,
+	requestToolPermission?: (
+		ws: Bun.ServerWebSocket<WsSessionState>,
+		request: ToolPermissionRequest,
+	) => Promise<ToolPermissionDecision>,
+) {
 
 	return async function handlePromptMessage(
 		ws: Bun.ServerWebSocket<WsSessionState>,
@@ -24,6 +34,10 @@ export function createPromptHandler(app: App) {
 			cwd: params.cwd,
 			resumeSessionId: params.resumeSessionId,
 			allowedTools: app.config.allowedTools,
+			...(requestToolPermission && {
+				onPermissionRequest: (request: ToolPermissionRequest) =>
+					requestToolPermission(ws, request),
+			}),
 			onSessionId: (sessionId) => {
 				resolvedSessionId = sessionId;
 

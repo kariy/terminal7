@@ -53,6 +53,20 @@ export const WsFileSearchSchema = z.object({
 	limit: z.number().int().min(1).max(50).optional(),
 });
 
+const PermissionModeSchema = z.enum([
+	"default",
+	"acceptEdits",
+	"bypassPermissions",
+]);
+
+export const WsPermissionRespondSchema = z.object({
+	type: z.literal("permission.respond"),
+	request_id: z.string().min(1),
+	decision: z.enum(["allow", "deny"]),
+	message: z.string().max(4000).optional(),
+	mode: PermissionModeSchema.optional(),
+});
+
 export const WsClientMessageSchema = z.discriminatedUnion("type", [
 	WsSessionCreateSchema,
 	WsSessionResumeSchema,
@@ -62,6 +76,7 @@ export const WsClientMessageSchema = z.discriminatedUnion("type", [
 	WsPingSchema,
 	WsRepoListSchema,
 	WsFileSearchSchema,
+	WsPermissionRespondSchema,
 ]);
 
 export type WsClientMessage = z.infer<typeof WsClientMessageSchema>;

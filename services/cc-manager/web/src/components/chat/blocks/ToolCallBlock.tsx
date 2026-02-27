@@ -12,12 +12,24 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ContentBlockState } from "@/types/chat";
+import type {
+  ContentBlockState,
+  PermissionMode,
+  ToolPermissionRequestState,
+} from "@/types/chat";
 import { ToolInput } from "./ToolInput";
+import { ExitPlanModeApproval } from "./ExitPlanModeApproval";
 
 interface ToolCallBlockProps {
   block: ContentBlockState;
   result?: ContentBlockState;
+  permissionRequest?: ToolPermissionRequestState;
+  onRespondPermission?: (
+    permissionRequestId: string,
+    decision: "allow" | "deny",
+    message?: string,
+    mode?: PermissionMode,
+  ) => void;
   isStreaming?: boolean;
   extraTopSpace?: boolean;
   extraBottomSpace?: boolean;
@@ -43,11 +55,15 @@ function ToolIcon({ name }: { name: string }) {
 export function ToolCallBlock({
   block,
   result,
+  permissionRequest,
+  onRespondPermission,
   isStreaming,
   extraTopSpace,
   extraBottomSpace,
 }: ToolCallBlockProps) {
-  const isRunning = !block.isComplete && isStreaming;
+  const isExitPlanMode = (block.toolName || "").toLowerCase() === "exitplanmode";
+  const isAwaitingPermission = permissionRequest?.status === "pending";
+  const isRunning = isAwaitingPermission || (!!isStreaming && !block.isComplete);
   const isError = result?.isError;
 
   // null = user hasn't toggled, use auto behavior (expanded while running)
@@ -96,8 +112,16 @@ export function ToolCallBlock({
 
       {expanded && (
         <div className="border-t border-border">
-          {block.toolInput && (
+          {block.toolInput && (!isExitPlanMode || !permissionRequest) && (
             <ToolInput toolName={block.toolName || ""} toolInput={block.toolInput} />
+          )}
+          {isExitPlanMode && permissionRequest && onRespondPermission && (
+            <div className={cn(block.toolInput ? "border-t border-border" : undefined)}>
+              <ExitPlanModeApproval
+                request={permissionRequest}
+                onRespond={onRespondPermission}
+              />
+            </div>
           )}
           {result?.text && (
             <div className="border-t border-border">

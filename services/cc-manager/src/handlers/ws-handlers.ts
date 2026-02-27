@@ -1,4 +1,5 @@
 import type { App } from "../app";
+import type { ToolPermissionDecision, ToolPermissionRequest } from "../claude-service";
 import { repoUrlToSlug } from "../git-service";
 import { WsClientMessageSchema, type WsClientMessage } from "../schemas";
 import type { WsSessionState } from "../types";
@@ -12,8 +13,82 @@ import {
 import { log } from "../logger";
 import { createPromptHandler } from "./prompt-handler";
 
+const PERMISSION_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+
+interface PendingPermissionRequest {
+	connectionId: string;
+	signal: AbortSignal;
+	abortHandler: () => void;
+	timeout: ReturnType<typeof setTimeout>;
+	resolve: (decision: ToolPermissionDecision) => void;
+}
+
 export function createWsHandlers(app: App) {
-	const handlePromptMessage = createPromptHandler(app);
+	const pendingPermissionRequests = new Map<string, PendingPermissionRequest>();
+
+	function resolvePendingPermissionRequest(
+		requestId: string,
+		decision: ToolPermissionDecision,
+	): boolean {
+		const pending = pendingPermissionRequests.get(requestId);
+		if (!pending) return false;
+
+		clearTimeout(pending.timeout);
+		pending.signal.removeEventListener("abort", pending.abortHandler);
+		pendingPermissionRequests.delete(requestId);
+		pending.resolve(decision);
+		return true;
+	}
+
+	async function requestToolPermission(
+		ws: Bun.ServerWebSocket<WsSessionState>,
+		request: ToolPermissionRequest,
+	): Promise<ToolPermissionDecision> {
+		return await new Promise<ToolPermissionDecision>((resolve) => {
+			const denyMessage = "Permission request canceled.";
+			const abortHandler = () => {
+				resolvePendingPermissionRequest(request.permissionRequestId, {
+					behavior: "deny",
+					message: denyMessage,
+				});
+			};
+
+			if (request.signal.aborted) {
+				resolve({
+					behavior: "deny",
+					message: denyMessage,
+				});
+				return;
+			}
+
+			const timeout = setTimeout(() => {
+				resolvePendingPermissionRequest(request.permissionRequestId, {
+					behavior: "deny",
+					message: "Permission request timed out.",
+				});
+			}, PERMISSION_REQUEST_TIMEOUT_MS);
+
+			pendingPermissionRequests.set(request.permissionRequestId, {
+				connectionId: ws.data.connectionId,
+				signal: request.signal,
+				abortHandler,
+				timeout,
+				resolve,
+			});
+			request.signal.addEventListener("abort", abortHandler, { once: true });
+
+			wsSend(ws, {
+				type: "permission.request",
+				request_id: request.permissionRequestId,
+				prompt_request_id: request.promptRequestId,
+				tool_name: request.toolName,
+				tool_use_id: request.toolUseId,
+				tool_input: request.toolInput,
+			});
+		});
+	}
+
+	const handlePromptMessage = createPromptHandler(app, requestToolPermission);
 
 	type WsHandler = (
 		ws: Bun.ServerWebSocket<WsSessionState>,
@@ -282,6 +357,39 @@ export function createWsHandlers(app: App) {
 		});
 	}
 
+	function handlePermissionRespond(
+		ws: Bun.ServerWebSocket<WsSessionState>,
+		message: WsClientMessage,
+	) {
+		if (message.type !== "permission.respond") return;
+
+		const pending = pendingPermissionRequests.get(message.request_id);
+		if (!pending) {
+			wsError(
+				ws,
+				"Permission request not found",
+				"permission_request_not_found",
+				message.request_id,
+			);
+			return;
+		}
+		if (pending.connectionId !== ws.data.connectionId) {
+			wsError(
+				ws,
+				"Permission request does not belong to this connection",
+				"permission_request_connection_mismatch",
+				message.request_id,
+			);
+			return;
+		}
+
+		resolvePendingPermissionRequest(message.request_id, {
+			behavior: message.decision,
+			...(message.message && { message: message.message }),
+			...(message.mode && { mode: message.mode }),
+		});
+	}
+
 	const handlers: Record<string, WsHandler> = {
 		"session.create": handleSessionCreate,
 		"session.resume": handleSessionResumeOrSend,
@@ -291,6 +399,7 @@ export function createWsHandlers(app: App) {
 		ping: handlePing,
 		"repo.list": handleRepoList,
 		"file.search": handleFileSearch,
+		"permission.respond": handlePermissionRespond,
 	};
 
 	return {
@@ -346,6 +455,14 @@ export function createWsHandlers(app: App) {
 				app.claudeService.stopRequest(requestId);
 			}
 			ws.data.activeRequests.clear();
+
+			for (const [requestId, pending] of pendingPermissionRequests.entries()) {
+				if (pending.connectionId !== ws.data.connectionId) continue;
+				resolvePendingPermissionRequest(requestId, {
+					behavior: "deny",
+					message: "Permission request canceled: client disconnected.",
+				});
+			}
 		},
-	};
-}
+		};
+	}

@@ -19,7 +19,12 @@ import { SessionsView } from "@/components/views/SessionsView";
 import { ChatView } from "@/components/views/ChatView";
 import { TerminalView } from "@/components/views/TerminalView";
 import { SshView } from "@/components/views/SshView";
-import type { ChatMessage, ContentBlockState } from "@/types/chat";
+import type {
+  ChatMessage,
+  ContentBlockState,
+  PermissionMode,
+  ToolPermissionRequestState,
+} from "@/types/chat";
 
 // ── State ──
 
@@ -33,6 +38,7 @@ interface AppState {
   activeEncodedCwd: string | null;
   activeSessionMeta: WsSessionMeta | null;
   messages: ChatMessage[];
+  permissionRequests: ToolPermissionRequestState[];
   activeRequestIds: Set<string>;
   terminalOrigin: "sessions" | "ssh";
   activeSshConnectionId: string | null;
@@ -46,6 +52,7 @@ const initialState: AppState = {
   activeEncodedCwd: null,
   activeSessionMeta: null,
   messages: [],
+  permissionRequests: [],
   activeRequestIds: new Set(),
   terminalOrigin: "sessions",
   activeSshConnectionId: null,
@@ -66,6 +73,14 @@ type Action =
   | { type: "START_NEW_SESSION" }
   | { type: "RETURN_TO_SESSIONS" }
   | { type: "SET_HISTORY"; sessionId: string; messages: ChatMessage[] }
+  | { type: "PERMISSION_REQUEST"; request: ToolPermissionRequestState }
+  | {
+      type: "PERMISSION_RESPONSE";
+      permissionRequestId: string;
+      status: "approved" | "rejected";
+      message?: string;
+      mode?: PermissionMode;
+    }
   | { type: "SEND_MESSAGE"; text: string; requestId: string }
   | {
       type: "SESSION_CREATED";
@@ -101,6 +116,7 @@ function reducer(state: AppState, action: Action): AppState {
         activeSessionId: action.sessionId,
         activeEncodedCwd: action.encodedCwd,
         messages: action.messages ?? [],
+        permissionRequests: [],
         activeRequestIds: new Set(),
       };
     }
@@ -113,6 +129,7 @@ function reducer(state: AppState, action: Action): AppState {
         activeEncodedCwd: null,
         activeSessionMeta: null,
         messages: [],
+        permissionRequests: [],
         activeRequestIds: new Set(),
       };
 
@@ -121,6 +138,7 @@ function reducer(state: AppState, action: Action): AppState {
         ...state,
         view: "sessions",
         activeSessionMeta: null,
+        permissionRequests: [],
         activeRequestIds: new Set(),
       };
 
@@ -128,6 +146,75 @@ function reducer(state: AppState, action: Action): AppState {
       if (state.activeSessionId !== action.sessionId) return state;
       if (state.activeRequestIds.size > 0) return state;
       return { ...state, messages: action.messages };
+    }
+
+    case "PERMISSION_REQUEST": {
+      const next = [...state.permissionRequests];
+      const index = next.findIndex(
+        (entry) => entry.permissionRequestId === action.request.permissionRequestId,
+      );
+      if (index >= 0) {
+        next[index] = action.request;
+      } else {
+        next.push(action.request);
+      }
+
+      let nextMessages = state.messages;
+      const messageIndex = state.messages.findIndex(
+        (message) => message.requestId === action.request.promptRequestId,
+      );
+
+      const injectedToolBlock: ContentBlockState = {
+        type: "tool_use",
+        text: "",
+        toolName: action.request.toolName,
+        toolId: action.request.toolUseId,
+        toolInput: JSON.stringify(action.request.toolInput),
+        isComplete: true,
+      };
+
+      if (messageIndex >= 0) {
+        const target = state.messages[messageIndex]!;
+        const hasToolBlock = target.contentBlocks.some(
+          (block) =>
+            block.type === "tool_use" && block.toolId === action.request.toolUseId,
+        );
+        if (!hasToolBlock) {
+          nextMessages = state.messages.map((message, indexInMessages) =>
+            indexInMessages === messageIndex
+              ? {
+                  ...message,
+                  contentBlocks: [...message.contentBlocks, injectedToolBlock],
+                }
+              : message,
+          );
+        }
+      } else {
+        nextMessages = [
+          ...state.messages,
+          {
+            role: "assistant",
+            requestId: null,
+            contentBlocks: [injectedToolBlock],
+          },
+        ];
+      }
+
+      return { ...state, permissionRequests: next, messages: nextMessages };
+    }
+
+    case "PERMISSION_RESPONSE": {
+      const next = state.permissionRequests.map((entry) =>
+        entry.permissionRequestId === action.permissionRequestId
+          ? {
+              ...entry,
+              status: action.status,
+              message: action.message,
+              mode: action.mode,
+            }
+          : entry,
+      );
+      return { ...state, permissionRequests: next };
     }
 
     case "SEND_MESSAGE": {
@@ -179,6 +266,15 @@ function reducer(state: AppState, action: Action): AppState {
 
           const msgs = state.messages.map((m) => {
             if (m.requestId !== action.requestId) return m;
+            if (
+              block.type === "tool_use" &&
+              m.contentBlocks.some(
+                (existing) =>
+                  existing.type === "tool_use" && existing.toolId === block.id,
+              )
+            ) {
+              return m;
+            }
             return {
               ...m,
               contentBlocks: [...m.contentBlocks, newBlock],
@@ -640,6 +736,20 @@ export default function App() {
         });
         break;
 
+      case "permission.request":
+        dispatch({
+          type: "PERMISSION_REQUEST",
+          request: {
+            permissionRequestId: msg.request_id,
+            promptRequestId: msg.prompt_request_id,
+            toolName: msg.tool_name,
+            toolUseId: msg.tool_use_id,
+            toolInput: msg.tool_input,
+            status: "pending",
+          },
+        });
+        break;
+
       case "pong":
         break;
 
@@ -857,6 +967,32 @@ export default function App() {
     [send, status],
   );
 
+  const handlePermissionResponse = useCallback(
+    (
+      permissionRequestId: string,
+      decision: "allow" | "deny",
+      message?: string,
+      mode?: PermissionMode,
+    ) => {
+      dispatch({
+        type: "PERMISSION_RESPONSE",
+        permissionRequestId,
+        status: decision === "allow" ? "approved" : "rejected",
+        message,
+        mode,
+      });
+
+      send({
+        type: "permission.respond",
+        request_id: permissionRequestId,
+        decision,
+        ...(message && { message }),
+        ...(mode && { mode }),
+      });
+    },
+    [send],
+  );
+
   const handleOpenTerminal = useCallback(
     (index: number) => {
       const s = state.sessions[index];
@@ -1064,9 +1200,11 @@ export default function App() {
       {state.view === "chat" && (
         <ChatView
           messages={state.messages}
+          permissionRequests={state.permissionRequests}
           activeRequestIds={state.activeRequestIds}
           onSend={handleSendMessage}
           onFileSearch={handleFileSearch}
+          onRespondPermission={handlePermissionResponse}
           fileSuggestions={fileSuggestions}
           fileIndexing={fileSearchIndexing}
         />

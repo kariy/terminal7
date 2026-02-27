@@ -177,6 +177,18 @@ export interface WsPongMessage {
 	server_time: number;
 }
 
+export interface WsRepoListMessage {
+	type: "repo.list";
+	repositories: Array<{
+		id: string;
+		url: string;
+		slug: string;
+		default_branch: string;
+		created_at: number;
+		last_fetched_at: number;
+	}>;
+}
+
 export interface WsFileSearchEntry {
 	path: string;
 	kind: "file" | "dir";
@@ -193,6 +205,15 @@ export interface WsFileSearchResultMessage {
 	truncated?: boolean;
 }
 
+export interface WsPermissionRequestMessage {
+	type: "permission.request";
+	request_id: string;
+	prompt_request_id: string;
+	tool_name: string;
+	tool_use_id: string;
+	tool_input: Record<string, unknown>;
+}
+
 export type WsServerMessage =
 	| WsHelloMessage
 	| WsSessionCreatedMessage
@@ -201,7 +222,9 @@ export type WsServerMessage =
 	| WsStreamDoneMessage
 	| WsErrorMessage
 	| WsPongMessage
-	| WsFileSearchResultMessage;
+	| WsRepoListMessage
+	| WsFileSearchResultMessage
+	| WsPermissionRequestMessage;
 
 // ── HTTP response bodies ────────────────────────────────────────
 

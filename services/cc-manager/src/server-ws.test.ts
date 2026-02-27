@@ -289,6 +289,60 @@ describe("session.stop", () => {
 	});
 });
 
+describe("permission.request/respond", () => {
+	test("permission.respond allow resolves an ExitPlanMode permission request", async () => {
+		ctx.claudeService.setBehavior(async (args) => {
+			const decision = await args.onPermissionRequest?.({
+				permissionRequestId: "perm-req-1",
+				promptRequestId: args.requestId,
+				toolName: "ExitPlanMode",
+				toolUseId: "toolu_exit_plan_1",
+				toolInput: {
+					plan: "# Plan\n\n1. Add tests",
+					allowedPrompts: [{ tool: "Bash", prompt: "run tests" }],
+				},
+				signal: new AbortController().signal,
+			});
+
+			expect(decision?.behavior).toBe("allow");
+
+			args.onSessionId("sess-permission");
+			args.onDone();
+		});
+
+		await connect();
+		await ws.nextMessage(); // consume hello
+
+		ws.send({
+			type: "session.create",
+			request_id: "req-permission",
+			prompt: "Create a plan first",
+			cwd: "/tmp",
+		});
+
+		const permissionRequest = (await ws.nextMessage()) as Record<string, unknown>;
+		expect(permissionRequest.type).toBe("permission.request");
+		expect(permissionRequest.request_id).toBe("perm-req-1");
+		expect(permissionRequest.tool_name).toBe("ExitPlanMode");
+		expect(permissionRequest.tool_use_id).toBe("toolu_exit_plan_1");
+
+		ws.send({
+			type: "permission.respond",
+			request_id: "perm-req-1",
+			decision: "allow",
+		});
+
+		const messages = await ws.collectUntil(
+			(msg) => (msg as Record<string, unknown>).type === "stream.done",
+		);
+
+		const types = messages.map(
+			(m) => (m as Record<string, unknown>).type,
+		);
+		expect(types).toEqual(["session.created", "stream.done"]);
+	});
+});
+
 describe("file.search", () => {
 	test("returns matching file and directory entries", async () => {
 		const sessionId = "sess-file-search";

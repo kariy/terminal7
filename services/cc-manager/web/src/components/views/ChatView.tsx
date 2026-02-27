@@ -3,7 +3,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { TypingIndicator } from "@/components/chat/TypingIndicator";
 import { ChatInput, type FileSuggestion } from "@/components/chat/ChatInput";
-import type { ChatMessage } from "@/types/chat";
+import type { ChatMessage, PermissionMode, ToolPermissionRequestState } from "@/types/chat";
 
 interface Turn {
   userMessage: ChatMessage | null;
@@ -32,18 +32,27 @@ function groupIntoTurns(messages: ChatMessage[]): Turn[] {
 
 interface ChatViewProps {
   messages: ChatMessage[];
+  permissionRequests: ToolPermissionRequestState[];
   activeRequestIds: Set<string>;
   onSend: (text: string) => void;
   onFileSearch: (query: string | null) => void;
+  onRespondPermission: (
+    permissionRequestId: string,
+    decision: "allow" | "deny",
+    message?: string,
+    mode?: PermissionMode,
+  ) => void;
   fileSuggestions: FileSuggestion[];
   fileIndexing: boolean;
 }
 
 export function ChatView({
   messages,
+  permissionRequests,
   activeRequestIds,
   onSend,
   onFileSearch,
+  onRespondPermission,
   fileSuggestions,
   fileIndexing,
 }: ChatViewProps) {
@@ -83,6 +92,9 @@ export function ChatView({
                     <MessageBubble
                       role="user"
                       contentBlocks={turn.userMessage.contentBlocks}
+                      permissionRequests={permissionRequests}
+                      onRespondPermission={onRespondPermission}
+                      rawJson={turn.userMessage}
                       isStreaming={false}
                     />
                   )}
@@ -92,6 +104,13 @@ export function ChatView({
                   <MessageBubble
                     role="assistant"
                     contentBlocks={mergedBlocks}
+                    permissionRequests={permissionRequests}
+                    onRespondPermission={onRespondPermission}
+                    rawJson={
+                      turn.assistantMessages.length === 1
+                        ? turn.assistantMessages[0]
+                        : turn.assistantMessages
+                    }
                     isStreaming={isActive}
                   />
                 ) : null}
