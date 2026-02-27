@@ -18,7 +18,7 @@ function formatCost(usd: number): string {
 export function SessionCard({ session, onClick, onOpenTerminal }: SessionCardProps) {
   return (
     <Card
-      className="flex items-center gap-2.5 p-3 cursor-pointer transition-colors hover:bg-secondary/60 mb-2.5"
+      className="flex items-center gap-2.5 p-3 cursor-pointer transition-colors duration-150 hover:bg-foreground/[0.06] mb-2.5"
       onClick={onClick}
     >
       <div className="flex-1 min-w-0">
