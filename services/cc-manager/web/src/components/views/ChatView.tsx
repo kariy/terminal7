@@ -99,6 +99,15 @@ export function ChatView({
     { value: "plan", label: "Plan" },
     { value: "bypassPermissions", label: "Bypass" },
   ];
+  const activeModeIndex = modeOptions.findIndex(
+    (option) => option.value === sessionPermissionMode,
+  );
+  const sliderColorClass =
+    sessionPermissionMode === "plan"
+      ? "bg-green-100"
+      : sessionPermissionMode === "bypassPermissions"
+        ? "bg-red-100"
+        : "bg-secondary";
 
   return (
     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -152,38 +161,43 @@ export function ChatView({
         </div>
       </ScrollArea>
       <div className="px-3 pt-2 pb-0.5 bg-background">
-        <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-secondary/25 p-1">
+        <div className="inline-flex items-center gap-2 rounded-lg border border-border bg-secondary/25 p-1">
           <span className="px-2 text-[11px] font-medium text-muted-foreground">
             Mode
           </span>
-          {modeOptions.map((option) => {
-            const selected = sessionPermissionMode === option.value;
-            const planClasses = selected
-              ? "bg-green-100 text-green-900 hover:bg-green-100"
-              : "text-green-800/80 hover:text-green-900 hover:bg-green-100/60";
-            const bypassClasses = selected
-              ? "bg-red-100 text-red-900 hover:bg-red-100"
-              : "text-red-800/80 hover:text-red-900 hover:bg-red-100/60";
-            const defaultClasses = selected
-              ? "bg-secondary text-foreground"
-              : "text-muted-foreground hover:text-foreground hover:bg-secondary/60";
-            const colorClasses =
-              option.value === "plan"
-                ? planClasses
-                : option.value === "bypassPermissions"
-                  ? bypassClasses
-                  : defaultClasses;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${colorClasses}`}
-                onClick={() => onPermissionModeChange(option.value)}
-              >
-                {option.label}
-              </button>
-            );
-          })}
+          <div className="relative grid grid-cols-3 rounded-md bg-background/70 p-0.5">
+            <div className="pointer-events-none absolute inset-0 p-0.5">
+              <div
+                className={`h-full w-1/3 rounded-[5px] shadow-sm transition-transform transition-colors duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${sliderColorClass}`}
+                style={{ transform: `translateX(${Math.max(activeModeIndex, 0) * 100}%)` }}
+              />
+            </div>
+            {modeOptions.map((option) => {
+              const selected = sessionPermissionMode === option.value;
+              const textClass = selected
+                ? option.value === "plan"
+                  ? "text-green-900"
+                  : option.value === "bypassPermissions"
+                    ? "text-red-900"
+                    : "text-foreground"
+                : option.value === "plan"
+                  ? "text-green-800/70 hover:text-green-900"
+                  : option.value === "bypassPermissions"
+                    ? "text-red-800/70 hover:text-red-900"
+                    : "text-muted-foreground hover:text-foreground";
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  className={`relative z-10 rounded-[5px] px-2.5 py-1 text-xs font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${textClass}`}
+                  onClick={() => onPermissionModeChange(option.value)}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
       <ChatInput
