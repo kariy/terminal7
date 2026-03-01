@@ -9,7 +9,6 @@ import type {
 import { TextBlock } from "./blocks/TextBlock";
 import { ToolCallBlock } from "./blocks/ToolCallBlock";
 import { ThinkingBlock } from "./blocks/ThinkingBlock";
-import { ResultBar } from "./blocks/ResultBar";
 
 interface MessageBubbleProps {
   role: "user" | "assistant";
@@ -138,17 +137,6 @@ export function MessageBubble({
                 key={i}
                 text={block.text}
                 isStreaming={isStreaming && !block.isComplete}
-              />
-            );
-          }
-
-          if (block.type === "result") {
-            return (
-              <ResultBar
-                key={i}
-                isError={block.isResultError}
-                totalCostUsd={block.totalCostUsd}
-                durationSeconds={block.durationSeconds}
               />
             );
           }

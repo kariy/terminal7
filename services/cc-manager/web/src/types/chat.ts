@@ -11,7 +11,6 @@ export interface ContentBlockState {
   toolResultForId?: string;
   isError?: boolean;
   // result (from SDK result message)
-  isResultError?: boolean;
   totalCostUsd?: number;
   durationSeconds?: number;
 }

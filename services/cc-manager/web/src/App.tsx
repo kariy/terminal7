@@ -512,24 +512,6 @@ function reducer(state: AppState, action: Action): AppState {
         return { ...state, messages: msgs };
       }
 
-      if (sdk.type === "result") {
-        const msgs = state.messages.map((m) => {
-          if (m.requestId !== action.requestId) return m;
-          const durationSeconds = m.streamStartTime
-            ? (Date.now() - m.streamStartTime) / 1000
-            : undefined;
-          const resultBlock: ContentBlockState = {
-            type: "result",
-            text: sdk.result ?? "",
-            isResultError: sdk.is_error,
-            totalCostUsd: sdk.total_cost_usd,
-            durationSeconds,
-          };
-          return { ...m, contentBlocks: [...m.contentBlocks, resultBlock] };
-        });
-        return { ...state, messages: msgs };
-      }
-
       // All other SDK message types: ignore
       return state;
     }
