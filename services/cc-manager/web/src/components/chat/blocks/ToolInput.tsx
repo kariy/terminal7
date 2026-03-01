@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy, X } from "lucide-react";
 import { copyText } from "@/lib/clipboard";
+import { TextBlock } from "./TextBlock";
 
 interface ToolInputProps {
   toolName: string;
@@ -14,6 +15,11 @@ export function ToolInput({ toolName, toolInput }: ToolInputProps) {
   }
 
   const name = toolName.toLowerCase();
+  const normalizedToolName = normalizeToolName(toolName);
+
+  if (isExitPlanModeToolName(normalizedToolName)) {
+    return <ExitPlanModeInput data={parsed} />;
+  }
 
   if (name === "bash") {
     return <BashInput data={parsed} />;
@@ -43,6 +49,17 @@ export function ToolInput({ toolName, toolInput }: ToolInputProps) {
   return <DefaultInput data={parsed} />;
 }
 
+function normalizeToolName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isExitPlanModeToolName(normalizedToolName: string): boolean {
+  return (
+    normalizedToolName === "exitplanmode" ||
+    normalizedToolName.endsWith("exitplanmode")
+  );
+}
+
 function safeParse(text: string): Record<string, unknown> | null {
   if (!text) return null;
   try {
@@ -61,6 +78,25 @@ function RawInput({ text }: { text: string }) {
       {text}
     </pre>
   );
+}
+
+function ExitPlanModeInput({ data }: { data: Record<string, unknown> }) {
+  const plan = getNonEmptyString(data.plan);
+  if (!plan) {
+    return <DefaultInput data={data} />;
+  }
+
+  return (
+    <div className="p-2">
+      <TextBlock text={plan} />
+    </div>
+  );
+}
+
+function getNonEmptyString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function BashInput({ data }: { data: Record<string, unknown> }) {

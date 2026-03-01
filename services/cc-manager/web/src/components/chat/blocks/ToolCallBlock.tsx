@@ -18,8 +18,8 @@ import type {
   ToolPermissionRequestState,
 } from "@/types/chat";
 import { ToolInput } from "./ToolInput";
-import { ExitPlanModeApproval } from "./ExitPlanModeApproval";
 import { AskUserQuestionApproval } from "./AskUserQuestionApproval";
+import { ExitPlanModeMessage } from "./ExitPlanModeMessage";
 
 interface ToolCallBlockProps {
   block: ContentBlockState;
@@ -62,7 +62,7 @@ export function ToolCallBlock({
   const isAskUserQuestion =
     isAskUserQuestionTool(toolName) || hasAskUserQuestionPayload(block.toolInput);
   const hasInteractivePermissionUi =
-    (isExitPlanMode || isAskUserQuestion) &&
+    isAskUserQuestion &&
     !!permissionRequest &&
     !!onRespondPermission;
   const isAwaitingPermission = permissionRequest?.status === "pending";
@@ -76,6 +76,18 @@ export function ToolCallBlock({
   const handleToggle = () => {
     setUserExpanded((prev) => !(prev ?? expanded));
   };
+
+  if (isExitPlanMode) {
+    return (
+      <ExitPlanModeMessage
+        block={block}
+        permissionRequest={permissionRequest}
+        onRespondPermission={onRespondPermission}
+        extraTopSpace={extraTopSpace}
+        extraBottomSpace={extraBottomSpace}
+      />
+    );
+  }
 
   return (
     <div
@@ -117,14 +129,6 @@ export function ToolCallBlock({
         <div className="border-t border-border">
           {block.toolInput && !hasInteractivePermissionUi && (
             <ToolInput toolName={block.toolName || ""} toolInput={block.toolInput} />
-          )}
-          {isExitPlanMode && permissionRequest && onRespondPermission && (
-            <div className={cn(block.toolInput ? "border-t border-border" : undefined)}>
-              <ExitPlanModeApproval
-                request={permissionRequest}
-                onRespond={onRespondPermission}
-              />
-            </div>
           )}
           {isAskUserQuestion && permissionRequest && onRespondPermission && (
             <div className={cn(block.toolInput ? "border-t border-border" : undefined)}>

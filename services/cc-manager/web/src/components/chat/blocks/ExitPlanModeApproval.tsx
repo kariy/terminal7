@@ -5,10 +5,13 @@ import type {
   RespondPermissionHandler,
   ToolPermissionRequestState,
 } from "@/types/chat";
+import { TextBlock } from "./TextBlock";
 
 interface ExitPlanModeApprovalProps {
   request: ToolPermissionRequestState;
   onRespond: RespondPermissionHandler;
+  showPlan?: boolean;
+  showRequestedPermissions?: boolean;
 }
 
 interface AllowedPrompt {
@@ -19,6 +22,8 @@ interface AllowedPrompt {
 export function ExitPlanModeApproval({
   request,
   onRespond,
+  showPlan = true,
+  showRequestedPermissions = true,
 }: ExitPlanModeApprovalProps) {
   const [feedback, setFeedback] = useState("");
 
@@ -55,16 +60,16 @@ export function ExitPlanModeApproval({
     <div className="p-3 space-y-3 bg-secondary/20">
       <div className="text-xs font-medium">Ready to code?</div>
 
-      {plan && (
+      {showPlan && plan && (
         <div className="rounded border border-border bg-card p-2">
           <div className="text-[11px] text-muted-foreground mb-1">Plan</div>
-          <pre className="text-xs font-mono whitespace-pre-wrap max-h-64 overflow-y-auto">
-            {plan}
-          </pre>
+          <div className="max-h-64 overflow-y-auto">
+            <TextBlock text={plan} />
+          </div>
         </div>
       )}
 
-      {allowedPrompts.length > 0 && (
+      {showRequestedPermissions && allowedPrompts.length > 0 && (
         <div className="space-y-1">
           <div className="text-[11px] text-muted-foreground">
             Requested permissions
