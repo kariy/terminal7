@@ -9,6 +9,7 @@ import type {
 import { TextBlock } from "./blocks/TextBlock";
 import { ToolCallBlock } from "./blocks/ToolCallBlock";
 import { ThinkingBlock } from "./blocks/ThinkingBlock";
+import { TypingBarsLoader } from "./blocks/TypingBarsLoader";
 
 interface MessageBubbleProps {
   role: "user" | "assistant";
@@ -64,7 +65,7 @@ export function MessageBubble({
       <div className="flex justify-end">
         <div className="relative max-w-[80%] pl-3.5 pr-10 py-2.5 rounded-2xl text-sm leading-relaxed break-words bg-user-bubble rounded-br-sm">
           <CopyRawJsonButton copied={copied} onClick={handleCopyRawJson} />
-          <TextBlock text={text} isStreaming={false} />
+          <TextBlock text={text} />
         </div>
       </div>
     );
@@ -80,15 +81,6 @@ export function MessageBubble({
 
   const visibleBlocks = contentBlocks.filter((block) => block.type !== "tool_result");
 
-  // Find the last text block index for streaming cursor
-  let lastTextIndex = -1;
-  for (let i = visibleBlocks.length - 1; i >= 0; i--) {
-    if (visibleBlocks[i].type === "text") {
-      lastTextIndex = i;
-      break;
-    }
-  }
-
   return (
     <div className="flex justify-start">
       <div className="relative max-w-[90%] pl-3.5 pr-10 py-2.5 rounded-2xl rounded-bl-sm bg-card border border-border text-sm leading-relaxed break-words">
@@ -99,7 +91,6 @@ export function MessageBubble({
               <TextBlock
                 key={i}
                 text={block.text}
-                isStreaming={isStreaming && i === lastTextIndex}
               />
             );
           }
@@ -138,6 +129,11 @@ export function MessageBubble({
 
           return null;
         })}
+        {isStreaming && (
+          <div className="mt-2 flex items-end">
+            <TypingBarsLoader />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -168,8 +164,11 @@ function CopyRawJsonButton({ copied, onClick }: { copied: boolean; onClick: () =
       type="button"
       variant="ghost"
       size="icon"
-      className="absolute top-1.5 right-1.5 h-6 w-6 rounded-full text-muted-foreground/70 hover:text-foreground hover:bg-secondary/70"
-      onClick={onClick}
+      className="absolute z-20 top-1.5 right-1.5 h-6 w-6 rounded-full text-muted-foreground/70 hover:text-foreground hover:bg-secondary/70"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
       title={copied ? "Copied JSON" : "Copy raw JSON"}
       aria-label={copied ? "Copied JSON" : "Copy raw JSON"}
     >

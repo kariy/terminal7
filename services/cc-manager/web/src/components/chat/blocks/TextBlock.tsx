@@ -5,13 +5,10 @@ import { CodeBlock } from "./CodeBlock";
 
 interface TextBlockProps {
   text: string;
-  isStreaming?: boolean;
 }
 
-export function TextBlock({ text, isStreaming }: TextBlockProps) {
-  if (!text) {
-    return isStreaming ? <StreamingCursor /> : null;
-  }
+export function TextBlock({ text }: TextBlockProps) {
+  if (!text) return null;
 
   return (
     <div className="prose-chat">
@@ -118,7 +115,6 @@ export function TextBlock({ text, isStreaming }: TextBlockProps) {
       >
         {text}
       </ReactMarkdown>
-      {isStreaming && <StreamingCursor />}
     </div>
   );
 }
@@ -183,13 +179,4 @@ function getGitHubRepoLabel(href: string): string | null {
   }
 
   return `${owner}/${repo}`;
-}
-
-function StreamingCursor() {
-  return (
-    <span
-      className="inline-block w-0.5 h-4 bg-foreground align-text-bottom ml-0.5"
-      style={{ animation: "cursor-blink 1s step-end infinite" }}
-    />
-  );
 }
