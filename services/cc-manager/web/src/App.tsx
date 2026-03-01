@@ -43,6 +43,7 @@ interface AppState {
   permissionRequests: ToolPermissionRequestState[];
   sessionPermissionModes: Record<string, SessionPermissionMode>;
   draftPermissionMode: SessionPermissionMode;
+  streamMessageBaseByRequestId: Record<string, number>;
   activeRequestIds: Set<string>;
   terminalOrigin: "sessions" | "ssh";
   activeSshConnectionId: string | null;
@@ -59,6 +60,7 @@ const initialState: AppState = {
   permissionRequests: [],
   sessionPermissionModes: {},
   draftPermissionMode: "default",
+  streamMessageBaseByRequestId: {},
   activeRequestIds: new Set(),
   terminalOrigin: "sessions",
   activeSshConnectionId: null,
@@ -148,6 +150,14 @@ function findStreamBlockArrayIndex(
   return -1;
 }
 
+function countStreamBlocks(blocks: ContentBlockState[]): number {
+  let count = 0;
+  for (const block of blocks) {
+    if (isSdkStreamContentBlock(block)) count += 1;
+  }
+  return count;
+}
+
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "SET_CONNECTED":
@@ -167,6 +177,7 @@ function reducer(state: AppState, action: Action): AppState {
         activeEncodedCwd: action.encodedCwd,
         messages: action.messages ?? [],
         permissionRequests: [],
+        streamMessageBaseByRequestId: {},
         activeRequestIds: new Set(),
       };
     }
@@ -181,6 +192,7 @@ function reducer(state: AppState, action: Action): AppState {
         messages: [],
         permissionRequests: [],
         draftPermissionMode: "default",
+        streamMessageBaseByRequestId: {},
         activeRequestIds: new Set(),
       };
 
@@ -190,6 +202,7 @@ function reducer(state: AppState, action: Action): AppState {
         view: "sessions",
         activeSessionMeta: null,
         permissionRequests: [],
+        streamMessageBaseByRequestId: {},
         activeRequestIds: new Set(),
       };
 
@@ -345,8 +358,35 @@ function reducer(state: AppState, action: Action): AppState {
       if (sdk.type === "stream_event") {
         const { event } = sdk;
 
+        if (event.type === "message_start") {
+          const targetMessage = state.messages.find(
+            (m) => m.requestId === action.requestId,
+          );
+          if (!targetMessage) return state;
+          const base = countStreamBlocks(targetMessage.contentBlocks);
+          return {
+            ...state,
+            streamMessageBaseByRequestId: {
+              ...state.streamMessageBaseByRequestId,
+              [action.requestId]: base,
+            },
+          };
+        }
+
+        if (event.type === "message_stop") {
+          const { [action.requestId]: _removed, ...rest } =
+            state.streamMessageBaseByRequestId;
+          return {
+            ...state,
+            streamMessageBaseByRequestId: rest,
+          };
+        }
+
         if (event.type === "content_block_start") {
           const block = event.content_block;
+          const streamIndex =
+            (state.streamMessageBaseByRequestId[action.requestId] ?? 0) +
+            event.index;
           let newBlock: ContentBlockState;
           if (block.type === "text") {
             newBlock = { type: "text", text: block.text };
@@ -373,7 +413,7 @@ function reducer(state: AppState, action: Action): AppState {
             const nextBlocks = [...m.contentBlocks];
             const insertIndex = findStreamBlockInsertIndex(
               nextBlocks,
-              event.index,
+              streamIndex,
             );
             nextBlocks.splice(insertIndex, 0, newBlock);
 
@@ -388,10 +428,12 @@ function reducer(state: AppState, action: Action): AppState {
 
         if (event.type === "content_block_delta") {
           const { index, delta } = event;
+          const streamIndex =
+            (state.streamMessageBaseByRequestId[action.requestId] ?? 0) + index;
           const msgs = state.messages.map((m) => {
             if (m.requestId !== action.requestId) return m;
             const blocks = [...m.contentBlocks];
-            const targetIndex = findStreamBlockArrayIndex(blocks, index);
+            const targetIndex = findStreamBlockArrayIndex(blocks, streamIndex);
             if (targetIndex < 0) return m;
             const target = blocks[targetIndex];
             if (!target) return m;
@@ -412,10 +454,13 @@ function reducer(state: AppState, action: Action): AppState {
         }
 
         if (event.type === "content_block_stop") {
+          const streamIndex =
+            (state.streamMessageBaseByRequestId[action.requestId] ?? 0) +
+            event.index;
           const msgs = state.messages.map((m) => {
             if (m.requestId !== action.requestId) return m;
             const blocks = [...m.contentBlocks];
-            const targetIndex = findStreamBlockArrayIndex(blocks, event.index);
+            const targetIndex = findStreamBlockArrayIndex(blocks, streamIndex);
             if (targetIndex < 0) return m;
             const target = blocks[targetIndex];
             if (!target) return m;
@@ -425,7 +470,7 @@ function reducer(state: AppState, action: Action): AppState {
           return { ...state, messages: msgs };
         }
 
-        // message_start/delta/stop: no-op
+        // message_delta: no-op
         return state;
       }
 
@@ -492,10 +537,17 @@ function reducer(state: AppState, action: Action): AppState {
     case "STREAM_DONE": {
       const newIds = new Set(state.activeRequestIds);
       newIds.delete(action.requestId);
+      const { [action.requestId]: _removed, ...rest } =
+        state.streamMessageBaseByRequestId;
       const msgs = state.messages.map((m) =>
         m.requestId === action.requestId ? { ...m, requestId: null } : m,
       );
-      return { ...state, messages: msgs, activeRequestIds: newIds };
+      return {
+        ...state,
+        messages: msgs,
+        activeRequestIds: newIds,
+        streamMessageBaseByRequestId: rest,
+      };
     }
 
     case "SET_SESSION_META":
@@ -504,8 +556,12 @@ function reducer(state: AppState, action: Action): AppState {
     case "ERROR": {
       const errText = "Error: " + action.message;
       const newIds = new Set(state.activeRequestIds);
+      let nextStreamBaseByRequestId = state.streamMessageBaseByRequestId;
       if (action.requestId) {
         newIds.delete(action.requestId);
+        const { [action.requestId]: _removed, ...rest } =
+          nextStreamBaseByRequestId;
+        nextStreamBaseByRequestId = rest;
         const existing = state.messages.find(
           (m) => m.requestId === action.requestId,
         );
@@ -519,7 +575,12 @@ function reducer(state: AppState, action: Action): AppState {
                 }
               : m,
           );
-          return { ...state, messages: msgs, activeRequestIds: newIds };
+          return {
+            ...state,
+            messages: msgs,
+            activeRequestIds: newIds,
+            streamMessageBaseByRequestId: nextStreamBaseByRequestId,
+          };
         }
       }
       return {
@@ -529,6 +590,7 @@ function reducer(state: AppState, action: Action): AppState {
           { role: "assistant", requestId: null, contentBlocks: [{ type: "text", text: errText }] },
         ],
         activeRequestIds: newIds,
+        streamMessageBaseByRequestId: nextStreamBaseByRequestId,
       };
     }
 
