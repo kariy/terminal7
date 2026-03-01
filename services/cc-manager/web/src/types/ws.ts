@@ -184,6 +184,7 @@ export interface WsPermissionRespondMessage {
   decision: "allow" | "deny";
   message?: string;
   mode?: WsPermissionMode;
+  updated_input?: Record<string, unknown>;
 }
 
 export type WsClientMessage =

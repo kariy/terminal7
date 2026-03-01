@@ -17,6 +17,15 @@ export interface ContentBlockState {
 
 export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions";
 export type SessionPermissionMode = "default" | "plan" | "bypassPermissions";
+export type ToolPermissionUpdatedInput = Record<string, unknown>;
+
+export type RespondPermissionHandler = (
+  permissionRequestId: string,
+  decision: "allow" | "deny",
+  message?: string,
+  mode?: PermissionMode,
+  updatedInput?: ToolPermissionUpdatedInput,
+) => void;
 
 export interface ToolPermissionRequestState {
   permissionRequestId: string;

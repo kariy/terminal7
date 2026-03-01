@@ -24,6 +24,7 @@ import type {
   ContentBlockState,
   PermissionMode,
   SessionPermissionMode,
+  ToolPermissionUpdatedInput,
   ToolPermissionRequestState,
 } from "@/types/chat";
 
@@ -1169,6 +1170,7 @@ export default function App() {
       decision: "allow" | "deny",
       message?: string,
       mode?: PermissionMode,
+      updatedInput?: ToolPermissionUpdatedInput,
     ) => {
       dispatch({
         type: "PERMISSION_RESPONSE",
@@ -1184,6 +1186,7 @@ export default function App() {
         decision,
         ...(message && { message }),
         ...(mode && { mode }),
+        ...(updatedInput && { updated_input: updatedInput }),
       });
     },
     [send],

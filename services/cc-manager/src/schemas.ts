@@ -73,6 +73,7 @@ export const WsPermissionRespondSchema = z.object({
 	decision: z.enum(["allow", "deny"]),
 	message: z.string().max(4000).optional(),
 	mode: PermissionRespondModeSchema.optional(),
+	updated_input: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const WsClientMessageSchema = z.discriminatedUnion("type", [

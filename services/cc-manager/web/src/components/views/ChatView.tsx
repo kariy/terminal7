@@ -5,7 +5,7 @@ import { TypingIndicator } from "@/components/chat/TypingIndicator";
 import { ChatInput, type FileSuggestion } from "@/components/chat/ChatInput";
 import type {
   ChatMessage,
-  PermissionMode,
+  RespondPermissionHandler,
   SessionPermissionMode,
   ToolPermissionRequestState,
 } from "@/types/chat";
@@ -45,12 +45,7 @@ interface ChatViewProps {
   onFileSearch: (query: string | null) => void;
   onPermissionModeChange: (mode: SessionPermissionMode) => void;
   onCyclePermissionMode: () => void;
-  onRespondPermission: (
-    permissionRequestId: string,
-    decision: "allow" | "deny",
-    message?: string,
-    mode?: PermissionMode,
-  ) => void;
+  onRespondPermission: RespondPermissionHandler;
   fileSuggestions: FileSuggestion[];
   fileIndexing: boolean;
 }

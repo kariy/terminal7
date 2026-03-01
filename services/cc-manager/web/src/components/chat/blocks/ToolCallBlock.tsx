@@ -14,22 +14,18 @@ import {
 import { cn } from "@/lib/utils";
 import type {
   ContentBlockState,
-  PermissionMode,
+  RespondPermissionHandler,
   ToolPermissionRequestState,
 } from "@/types/chat";
 import { ToolInput } from "./ToolInput";
 import { ExitPlanModeApproval } from "./ExitPlanModeApproval";
+import { AskUserQuestionApproval } from "./AskUserQuestionApproval";
 
 interface ToolCallBlockProps {
   block: ContentBlockState;
   result?: ContentBlockState;
   permissionRequest?: ToolPermissionRequestState;
-  onRespondPermission?: (
-    permissionRequestId: string,
-    decision: "allow" | "deny",
-    message?: string,
-    mode?: PermissionMode,
-  ) => void;
+  onRespondPermission?: RespondPermissionHandler;
   isStreaming?: boolean;
   extraTopSpace?: boolean;
   extraBottomSpace?: boolean;
@@ -61,7 +57,14 @@ export function ToolCallBlock({
   extraTopSpace,
   extraBottomSpace,
 }: ToolCallBlockProps) {
-  const isExitPlanMode = (block.toolName || "").toLowerCase() === "exitplanmode";
+  const toolName = block.toolName || "";
+  const isExitPlanMode = isExitPlanModeTool(toolName);
+  const isAskUserQuestion =
+    isAskUserQuestionTool(toolName) || hasAskUserQuestionPayload(block.toolInput);
+  const hasInteractivePermissionUi =
+    (isExitPlanMode || isAskUserQuestion) &&
+    !!permissionRequest &&
+    !!onRespondPermission;
   const isAwaitingPermission = permissionRequest?.status === "pending";
   const isRunning = isAwaitingPermission || (!!isStreaming && !block.isComplete);
   const isError = result?.isError;
@@ -112,12 +115,20 @@ export function ToolCallBlock({
 
       {expanded && (
         <div className="border-t border-border">
-          {block.toolInput && (!isExitPlanMode || !permissionRequest) && (
+          {block.toolInput && !hasInteractivePermissionUi && (
             <ToolInput toolName={block.toolName || ""} toolInput={block.toolInput} />
           )}
           {isExitPlanMode && permissionRequest && onRespondPermission && (
             <div className={cn(block.toolInput ? "border-t border-border" : undefined)}>
               <ExitPlanModeApproval
+                request={permissionRequest}
+                onRespond={onRespondPermission}
+              />
+            </div>
+          )}
+          {isAskUserQuestion && permissionRequest && onRespondPermission && (
+            <div className={cn(block.toolInput ? "border-t border-border" : undefined)}>
+              <AskUserQuestionApproval
                 request={permissionRequest}
                 onRespond={onRespondPermission}
               />
@@ -134,4 +145,34 @@ export function ToolCallBlock({
       )}
     </div>
   );
+}
+
+function normalizeToolName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isExitPlanModeTool(toolName: string): boolean {
+  const normalized = normalizeToolName(toolName);
+  return normalized === "exitplanmode" || normalized.endsWith("exitplanmode");
+}
+
+function isAskUserQuestionTool(toolName: string): boolean {
+  const normalized = normalizeToolName(toolName);
+  return (
+    normalized === "askuserquestion" ||
+    normalized.endsWith("askuserquestion") ||
+    normalized.includes("askuserquestion")
+  );
+}
+
+function hasAskUserQuestionPayload(toolInput?: string): boolean {
+  if (!toolInput) return false;
+
+  try {
+    const parsed = JSON.parse(toolInput) as Record<string, unknown>;
+    const questions = parsed.questions;
+    return Array.isArray(questions) && questions.length > 0;
+  } catch {
+    return false;
+  }
 }

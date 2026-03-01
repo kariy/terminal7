@@ -17,6 +17,8 @@ const PERMISSION_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
 
 interface PendingPermissionRequest {
 	connectionId: string;
+	toolName: string;
+	toolInput: Record<string, unknown>;
 	signal: AbortSignal;
 	abortHandler: () => void;
 	timeout: ReturnType<typeof setTimeout>;
@@ -70,6 +72,8 @@ export function createWsHandlers(app: App) {
 
 			pendingPermissionRequests.set(request.permissionRequestId, {
 				connectionId: ws.data.connectionId,
+				toolName: request.toolName,
+				toolInput: request.toolInput,
 				signal: request.signal,
 				abortHandler,
 				timeout,
@@ -161,6 +165,10 @@ export function createWsHandlers(app: App) {
 						worktreeId,
 						projectsDir: app.config.projectsDir,
 					},
+				);
+				await app.gitService.verifyWorktree(
+					repo.bareRepoPath,
+					worktreeResult.worktreePath,
 				);
 				worktreePath = worktreeResult.worktreePath;
 				branch = worktreeResult.branch;
@@ -385,10 +393,19 @@ export function createWsHandlers(app: App) {
 			return;
 		}
 
+		const isExitPlanMode =
+			pending.toolName.toLowerCase() === "exitplanmode";
+		const updatedInput =
+			message.updated_input ??
+			(message.decision === "allow" && isExitPlanMode
+				? pending.toolInput
+				: undefined);
+
 		resolvePendingPermissionRequest(message.request_id, {
 			behavior: message.decision,
 			...(message.message && { message: message.message }),
 			...(message.mode && { mode: message.mode }),
+			...(updatedInput && { updatedInput }),
 		});
 	}
 

@@ -2,18 +2,13 @@ import { useMemo, useState } from "react";
 import { CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type {
-  PermissionMode,
+  RespondPermissionHandler,
   ToolPermissionRequestState,
 } from "@/types/chat";
 
 interface ExitPlanModeApprovalProps {
   request: ToolPermissionRequestState;
-  onRespond: (
-    permissionRequestId: string,
-    decision: "allow" | "deny",
-    message?: string,
-    mode?: PermissionMode,
-  ) => void;
+  onRespond: RespondPermissionHandler;
 }
 
 interface AllowedPrompt {
@@ -95,7 +90,15 @@ export function ExitPlanModeApproval({
         <Button
           type="button"
           size="sm"
-          onClick={() => onRespond(request.permissionRequestId, "allow")}
+          onClick={() =>
+            onRespond(
+              request.permissionRequestId,
+              "allow",
+              undefined,
+              undefined,
+              request.toolInput,
+            )
+          }
         >
           Approve
         </Button>
@@ -107,7 +110,7 @@ export function ExitPlanModeApproval({
             onRespond(
               request.permissionRequestId,
               "deny",
-              feedback.trim() || undefined,
+              feedback.trim() || "Exit plan mode was rejected by the user.",
             )
           }
         >

@@ -38,6 +38,7 @@ export interface ToolPermissionDecision {
 	message?: string;
 	mode?: ExitPlanModePermissionMode;
 	updatedPermissions?: PermissionUpdate[];
+	updatedInput?: Record<string, unknown>;
 }
 
 export interface ClaudeServiceLike {
@@ -66,9 +67,14 @@ export class ClaudeService implements ClaudeServiceLike {
 						input,
 						options,
 					) => {
-						// Keep the existing behavior for non-plan-exit tools in this UI:
+						const isExitPlanMode = isExitPlanModeTool(toolName);
+						const isAskUserQuestion =
+							isAskUserQuestionTool(toolName, input);
+
+						// Keep the existing behavior for tools that don't require explicit
+						// user interaction in this UI:
 						// allow and apply SDK-provided suggestions when available.
-						if (toolName !== "ExitPlanMode") {
+						if (!isExitPlanMode && !isAskUserQuestion) {
 							return {
 								behavior: "allow",
 								updatedPermissions: options.suggestions,
@@ -88,23 +94,46 @@ export class ClaudeService implements ClaudeServiceLike {
 							});
 
 							if (decision.behavior === "allow") {
-								const updatedPermissions =
-									decision.updatedPermissions ??
-									buildExitPlanModePermissionUpdates(
-										input,
-										decision.mode ?? "default",
-									);
-
-								return {
+								const response: {
+									behavior: "allow";
+									toolUseID: string;
+									updatedPermissions?: PermissionUpdate[];
+									updatedInput?: Record<string, unknown>;
+								} = {
 									behavior: "allow",
-									updatedPermissions,
 									toolUseID: options.toolUseID,
 								};
+
+								if (isExitPlanMode) {
+									response.updatedPermissions =
+										decision.updatedPermissions ??
+										buildExitPlanModePermissionUpdates(
+											input,
+											decision.mode ?? "default",
+										);
+								} else {
+									response.updatedPermissions =
+										decision.updatedPermissions ??
+										options.suggestions;
+								}
+
+								if (decision.updatedInput) {
+									response.updatedInput = decision.updatedInput;
+								} else if (isExitPlanMode) {
+									// ExitPlanMode allow responses must carry updatedInput.
+									response.updatedInput = input;
+								}
+
+								return response;
 							}
 
 							return {
 								behavior: "deny",
-								message: decision.message ?? "Exit plan mode was rejected.",
+								message:
+									decision.message ??
+									(isAskUserQuestion
+										? "User input was not provided."
+										: "Exit plan mode was rejected."),
 								toolUseID: options.toolUseID,
 							};
 						} catch (error) {
@@ -204,4 +233,48 @@ function parseExitPlanAllowedPrompts(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
+}
+
+function normalizeToolName(value: string): string {
+	return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isExitPlanModeTool(toolName: string): boolean {
+	const normalized = normalizeToolName(toolName);
+	return normalized === "exitplanmode" || normalized.endsWith("exitplanmode");
+}
+
+function isAskUserQuestionTool(
+	toolName: string,
+	input: Record<string, unknown>,
+): boolean {
+	const normalized = normalizeToolName(toolName);
+	if (
+		normalized === "askuserquestion" ||
+		normalized.endsWith("askuserquestion") ||
+		normalized.includes("askuserquestion")
+	) {
+		return true;
+	}
+
+	return looksLikeAskUserQuestionInput(input);
+}
+
+function looksLikeAskUserQuestionInput(input: Record<string, unknown>): boolean {
+	const rawQuestions = input.questions;
+	if (!Array.isArray(rawQuestions) || rawQuestions.length === 0) return false;
+
+	for (const question of rawQuestions) {
+		if (!isRecord(question)) return false;
+		if (typeof question.question !== "string") return false;
+		if (!Array.isArray(question.options) || question.options.length === 0) {
+			return false;
+		}
+		for (const option of question.options) {
+			if (!isRecord(option)) return false;
+			if (typeof option.label !== "string") return false;
+		}
+	}
+
+	return true;
 }

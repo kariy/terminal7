@@ -3,7 +3,7 @@ import { Check, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type {
   ContentBlockState,
-  PermissionMode,
+  RespondPermissionHandler,
   ToolPermissionRequestState,
 } from "@/types/chat";
 import { TextBlock } from "./blocks/TextBlock";
@@ -14,12 +14,7 @@ interface MessageBubbleProps {
   role: "user" | "assistant";
   contentBlocks: ContentBlockState[];
   permissionRequests: ToolPermissionRequestState[];
-  onRespondPermission: (
-    permissionRequestId: string,
-    decision: "allow" | "deny",
-    message?: string,
-    mode?: PermissionMode,
-  ) => void;
+  onRespondPermission: RespondPermissionHandler;
   rawJson: unknown;
   isStreaming?: boolean;
 }
