@@ -622,6 +622,76 @@ describe("permission.request/respond", () => {
 		);
 		expect(types).toEqual(["session.created", "stream.done"]);
 	});
+
+	test("permission.respond allow without updated_input falls back for AskUserQuestion", async () => {
+		const toolInput = {
+			questions: [
+				{
+					header: "Location",
+					question: "Where should hello.py be created?",
+					options: [
+						{
+							label: "Home directory",
+							description: "Create it at ~/hello.py",
+						},
+						{
+							label: "Desktop",
+							description: "Create it at ~/Desktop/hello.py",
+						},
+					],
+					multiSelect: false,
+				},
+			],
+		};
+
+		ctx.claudeService.setBehavior(async (args) => {
+			const decision = await args.onPermissionRequest?.({
+				permissionRequestId: "perm-req-ask-2",
+				promptRequestId: args.requestId,
+				toolName: "AskUserQuestion",
+				toolUseId: "toolu_ask_user_2",
+				toolInput,
+				signal: new AbortController().signal,
+			});
+
+			expect(decision?.behavior).toBe("allow");
+			expect(decision?.updatedInput).toEqual(toolInput);
+
+			args.onSessionId("sess-permission-ask-2");
+			args.onDone();
+		});
+
+		await connect();
+		await ws.nextMessage(); // consume hello
+
+		ws.send({
+			type: "session.create",
+			request_id: "req-permission-ask-2",
+			prompt: "Ask for file location again",
+			cwd: "/tmp",
+		});
+
+		const permissionRequest = (await ws.nextMessage()) as Record<string, unknown>;
+		expect(permissionRequest.type).toBe("permission.request");
+		expect(permissionRequest.request_id).toBe("perm-req-ask-2");
+		expect(permissionRequest.tool_name).toBe("AskUserQuestion");
+		expect(permissionRequest.tool_use_id).toBe("toolu_ask_user_2");
+
+		ws.send({
+			type: "permission.respond",
+			request_id: "perm-req-ask-2",
+			decision: "allow",
+		});
+
+		const messages = await ws.collectUntil(
+			(msg) => (msg as Record<string, unknown>).type === "stream.done",
+		);
+
+		const types = messages.map(
+			(m) => (m as Record<string, unknown>).type,
+		);
+		expect(types).toEqual(["session.created", "stream.done"]);
+	});
 });
 
 describe("file.search", () => {

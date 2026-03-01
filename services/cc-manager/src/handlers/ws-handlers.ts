@@ -393,11 +393,9 @@ export function createWsHandlers(app: App) {
 			return;
 		}
 
-		const isExitPlanMode =
-			pending.toolName.toLowerCase() === "exitplanmode";
 		const updatedInput =
 			message.updated_input ??
-			(message.decision === "allow" && isExitPlanMode
+			(message.decision === "allow"
 				? pending.toolInput
 				: undefined);
 

@@ -119,8 +119,8 @@ export class ClaudeService implements ClaudeServiceLike {
 
 								if (decision.updatedInput) {
 									response.updatedInput = decision.updatedInput;
-								} else if (isExitPlanMode) {
-									// ExitPlanMode allow responses must carry updatedInput.
+								} else if (isExitPlanMode || isAskUserQuestion) {
+									// Interactive approval tools must carry updatedInput.
 									response.updatedInput = input;
 								}
 
