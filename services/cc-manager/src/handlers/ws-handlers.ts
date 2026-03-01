@@ -28,6 +28,12 @@ interface PendingPermissionRequest {
 export function createWsHandlers(app: App) {
 	const pendingPermissionRequests = new Map<string, PendingPermissionRequest>();
 
+	function ensureRecord(value: unknown): Record<string, unknown> {
+		return typeof value === "object" && value !== null
+			? (value as Record<string, unknown>)
+			: {};
+	}
+
 	function resolvePendingPermissionRequest(
 		requestId: string,
 		decision: ToolPermissionDecision,
@@ -47,6 +53,7 @@ export function createWsHandlers(app: App) {
 		request: ToolPermissionRequest,
 	): Promise<ToolPermissionDecision> {
 		return await new Promise<ToolPermissionDecision>((resolve) => {
+			const toolInput = ensureRecord(request.toolInput);
 			const denyMessage = "Permission request canceled.";
 			const abortHandler = () => {
 				resolvePendingPermissionRequest(request.permissionRequestId, {
@@ -73,7 +80,7 @@ export function createWsHandlers(app: App) {
 			pendingPermissionRequests.set(request.permissionRequestId, {
 				connectionId: ws.data.connectionId,
 				toolName: request.toolName,
-				toolInput: request.toolInput,
+				toolInput,
 				signal: request.signal,
 				abortHandler,
 				timeout,
@@ -87,7 +94,7 @@ export function createWsHandlers(app: App) {
 				prompt_request_id: request.promptRequestId,
 				tool_name: request.toolName,
 				tool_use_id: request.toolUseId,
-				tool_input: request.toolInput,
+				tool_input: toolInput,
 			});
 		});
 	}

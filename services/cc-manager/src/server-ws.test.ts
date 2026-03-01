@@ -692,6 +692,57 @@ describe("permission.request/respond", () => {
 		);
 		expect(types).toEqual(["session.created", "stream.done"]);
 	});
+
+	test("permission.respond allow sanitizes malformed tool_input fallback", async () => {
+		ctx.claudeService.setBehavior(async (args) => {
+			const decision = await args.onPermissionRequest?.({
+				permissionRequestId: "perm-req-exit-bad-input",
+				promptRequestId: args.requestId,
+				toolName: "ExitPlanMode",
+				toolUseId: "toolu_exit_bad_input",
+				toolInput: undefined as unknown as Record<string, unknown>,
+				signal: new AbortController().signal,
+			});
+
+			expect(decision?.behavior).toBe("allow");
+			expect(decision?.updatedInput).toEqual({});
+
+			args.onSessionId("sess-permission-exit-bad-input");
+			args.onDone();
+		});
+
+		await connect();
+		await ws.nextMessage(); // consume hello
+
+		ws.send({
+			type: "session.create",
+			request_id: "req-permission-exit-bad-input",
+			prompt: "Exit plan mode with malformed input",
+			cwd: "/tmp",
+		});
+
+		const permissionRequest = (await ws.nextMessage()) as Record<string, unknown>;
+		expect(permissionRequest.type).toBe("permission.request");
+		expect(permissionRequest.request_id).toBe("perm-req-exit-bad-input");
+		expect(permissionRequest.tool_name).toBe("ExitPlanMode");
+		expect(permissionRequest.tool_use_id).toBe("toolu_exit_bad_input");
+		expect(permissionRequest.tool_input).toEqual({});
+
+		ws.send({
+			type: "permission.respond",
+			request_id: "perm-req-exit-bad-input",
+			decision: "allow",
+		});
+
+		const messages = await ws.collectUntil(
+			(msg) => (msg as Record<string, unknown>).type === "stream.done",
+		);
+
+		const types = messages.map(
+			(m) => (m as Record<string, unknown>).type,
+		);
+		expect(types).toEqual(["session.created", "stream.done"]);
+	});
 });
 
 describe("file.search", () => {

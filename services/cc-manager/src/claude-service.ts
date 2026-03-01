@@ -67,9 +67,10 @@ export class ClaudeService implements ClaudeServiceLike {
 						input,
 						options,
 					) => {
+						const toolInput = ensureRecord(input);
 						const isExitPlanMode = isExitPlanModeTool(toolName);
 						const isAskUserQuestion =
-							isAskUserQuestionTool(toolName, input);
+							isAskUserQuestionTool(toolName, toolInput);
 
 						// Keep the existing behavior for tools that don't require explicit
 						// user interaction in this UI:
@@ -88,7 +89,7 @@ export class ClaudeService implements ClaudeServiceLike {
 								promptRequestId: args.requestId,
 								toolName,
 								toolUseId: options.toolUseID,
-								toolInput: input,
+								toolInput,
 								suggestions: options.suggestions,
 								signal: options.signal,
 							});
@@ -108,7 +109,7 @@ export class ClaudeService implements ClaudeServiceLike {
 									response.updatedPermissions =
 										decision.updatedPermissions ??
 										buildExitPlanModePermissionUpdates(
-											input,
+											toolInput,
 											decision.mode ?? "default",
 										);
 								} else {
@@ -121,7 +122,7 @@ export class ClaudeService implements ClaudeServiceLike {
 									response.updatedInput = decision.updatedInput;
 								} else if (isExitPlanMode || isAskUserQuestion) {
 									// Interactive approval tools must carry updatedInput.
-									response.updatedInput = input;
+									response.updatedInput = toolInput;
 								}
 
 								return response;
@@ -239,6 +240,10 @@ function normalizeToolName(value: string): string {
 	return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+function ensureRecord(value: unknown): Record<string, unknown> {
+	return isRecord(value) ? value : {};
+}
+
 function isExitPlanModeTool(toolName: string): boolean {
 	const normalized = normalizeToolName(toolName);
 	return normalized === "exitplanmode" || normalized.endsWith("exitplanmode");
@@ -246,8 +251,9 @@ function isExitPlanModeTool(toolName: string): boolean {
 
 function isAskUserQuestionTool(
 	toolName: string,
-	input: Record<string, unknown>,
+	input: unknown,
 ): boolean {
+	const recordInput = ensureRecord(input);
 	const normalized = normalizeToolName(toolName);
 	if (
 		normalized === "askuserquestion" ||
@@ -257,7 +263,7 @@ function isAskUserQuestionTool(
 		return true;
 	}
 
-	return looksLikeAskUserQuestionInput(input);
+	return looksLikeAskUserQuestionInput(recordInput);
 }
 
 function looksLikeAskUserQuestionInput(input: Record<string, unknown>): boolean {
