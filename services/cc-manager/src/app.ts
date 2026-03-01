@@ -109,11 +109,35 @@ export class App {
 		const sessionId = decodeURIComponent(match[1]);
 		const encodedCwdParam = url.searchParams.get("encoded_cwd");
 		const sessionCandidates = this.repository.findSessionCandidates(sessionId);
-		const chosen = encodedCwdParam
+		let chosen = encodedCwdParam
 			? sessionCandidates.find(
 					(candidate) => candidate.encodedCwd === encodedCwdParam,
 				)
-			: sessionCandidates[0];
+			: undefined;
+		if (!chosen) {
+			chosen = sessionCandidates[0];
+		}
+
+		// If a stale encoded_cwd variant was selected and has no indexed history,
+		// prefer a sibling variant of the same session/cwd that has messages.
+		if (chosen && encodedCwdParam && chosen.messageCount === 0) {
+			const richerSibling = sessionCandidates
+				.filter(
+					(candidate) =>
+						candidate.cwd === chosen.cwd &&
+						candidate.encodedCwd !== chosen.encodedCwd &&
+						candidate.messageCount > chosen.messageCount,
+				)
+				.sort((a, b) => {
+					if (a.messageCount !== b.messageCount) {
+						return b.messageCount - a.messageCount;
+					}
+					return b.lastActivityAt - a.lastActivityAt;
+				})[0];
+			if (richerSibling) {
+				chosen = richerSibling;
+			}
+		}
 
 		if (!chosen) {
 			return jsonResponse(404, {

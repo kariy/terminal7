@@ -240,6 +240,25 @@ export class ManagerRepository {
 					.run(nowMs());
 			})();
 		}
+
+		// V5: Collapse duplicate encoded_cwd variants per (session_id, cwd)
+		// and enforce uniqueness on that logical key.
+		const hasV5 = this.db
+			.query("SELECT 1 FROM schema_migrations WHERE version = 5")
+			.get() as { "1": number } | null;
+		if (!hasV5) {
+			this.db.transaction(() => {
+				this.collapseDuplicateSessionVariants();
+				this.db.exec(
+					"CREATE UNIQUE INDEX IF NOT EXISTS idx_session_metadata_session_cwd ON session_metadata(session_id, cwd);",
+				);
+				this.db
+					.query(
+						"INSERT INTO schema_migrations (version, applied_at) VALUES (5, ?)",
+					)
+					.run(nowMs());
+			})();
+		}
 	}
 
 	private getMetadataRow(
@@ -251,6 +270,30 @@ export class ManagerRepository {
 				"SELECT * FROM session_metadata WHERE session_id = ? AND encoded_cwd = ?",
 			)
 			.get(sessionId, encodedCwd) as SessionMetadataRow | null;
+	}
+
+	private getMetadataRowBySessionAndCwd(
+		sessionId: string,
+		cwd: string,
+	): SessionMetadataRow | null {
+		return this.db
+			.query(
+				`SELECT *
+				FROM session_metadata
+				WHERE session_id = ? AND cwd = ?
+				ORDER BY updated_at DESC, encoded_cwd DESC
+				LIMIT 1`,
+			)
+			.get(sessionId, cwd) as SessionMetadataRow | null;
+	}
+
+	private resolveStoredEncodedCwd(
+		sessionId: string,
+		cwd: string,
+		incomingEncodedCwd: string,
+	): string {
+		const existing = this.getMetadataRowBySessionAndCwd(sessionId, cwd);
+		return existing?.encoded_cwd ?? incomingEncodedCwd;
 	}
 
 	upsertSessionMetadata(params: {
@@ -266,11 +309,19 @@ export class ManagerRepository {
 		branch?: string;
 	}): SessionMetadata {
 		const ts = nowMs();
-		const activity = params.lastActivityAt ?? ts;
-		const existing = this.getMetadataRow(
+		const canonicalEncodedCwd = this.resolveStoredEncodedCwd(
 			params.sessionId,
+			params.cwd,
 			params.encodedCwd,
 		);
+		const existing = this.getMetadataRow(params.sessionId, canonicalEncodedCwd);
+		const requestedActivity = params.lastActivityAt ?? ts;
+		const existingActivity = existing?.last_activity_at ?? 0;
+		const activity = Math.max(existingActivity, requestedActivity);
+		const title =
+			existing && requestedActivity < existingActivity
+				? existing.title
+				: params.title;
 		const source: SessionMetadata["source"] = existing
 			? existing.source === params.source
 				? params.source
@@ -291,9 +342,9 @@ export class ManagerRepository {
 			)
 			.run(
 				params.sessionId,
-				params.encodedCwd,
+				canonicalEncodedCwd,
 				params.cwd,
-				params.title,
+				title,
 				createdAt,
 				ts,
 				activity,
@@ -306,9 +357,9 @@ export class ManagerRepository {
 
 		return {
 			sessionId: params.sessionId,
-			encodedCwd: params.encodedCwd,
+			encodedCwd: canonicalEncodedCwd,
 			cwd: params.cwd,
-			title: params.title,
+			title,
 			createdAt,
 			updatedAt: ts,
 			lastActivityAt: activity,
@@ -321,6 +372,11 @@ export class ManagerRepository {
 	}
 
 	upsertJsonlIndex(update: JsonlIndexUpdate): void {
+		const canonicalEncodedCwd = this.resolveStoredEncodedCwd(
+			update.sessionId,
+			update.cwd,
+			update.encodedCwd,
+		);
 		this.db
 			.query(
 				`INSERT OR REPLACE INTO session_file_index (
@@ -330,7 +386,7 @@ export class ManagerRepository {
 			)
 			.run(
 				update.sessionId,
-				update.encodedCwd,
+				canonicalEncodedCwd,
 				update.jsonlPath,
 				update.fileMtimeMs,
 				update.fileSize,
@@ -354,64 +410,15 @@ export class ManagerRepository {
 		cursor?: SessionListCursor;
 	}): { items: SessionSummary[]; nextCursor: SessionListCursor | null } {
 		const limit = Math.max(1, Math.min(params.limit, 100));
-		const limitPlusOne = limit + 1;
+		const allItems = this.listSessions();
+		const filtered = params.cursor
+			? allItems.filter((item) =>
+					this.isBeforeSessionCursor(item, params.cursor!),
+				)
+			: allItems;
 
-		const baseSelect = `SELECT
-				sm.session_id,
-				sm.encoded_cwd,
-				sm.cwd,
-				sm.title,
-				sm.created_at,
-				sm.updated_at,
-				sm.last_activity_at,
-				sm.source,
-				sm.total_cost_usd,
-				sm.repo_id,
-				sm.worktree_path,
-				sm.branch,
-				COALESCE(fi.message_count, 0) AS message_count
-			FROM session_metadata sm
-			LEFT JOIN session_file_index fi
-				ON fi.session_id = sm.session_id AND fi.encoded_cwd = sm.encoded_cwd`;
-
-		const orderBy = `
-			ORDER BY sm.last_activity_at DESC, sm.session_id DESC, sm.encoded_cwd DESC
-			LIMIT ?`;
-
-		const rows = params.cursor
-			? this.db
-					.query(
-						`${baseSelect}
-						WHERE
-							sm.last_activity_at < ?
-							OR (
-								sm.last_activity_at = ?
-								AND sm.session_id < ?
-							)
-							OR (
-								sm.last_activity_at = ?
-								AND sm.session_id = ?
-								AND sm.encoded_cwd < ?
-							)
-						${orderBy}`,
-					)
-					.all(
-						params.cursor.lastActivityAt,
-						params.cursor.lastActivityAt,
-						params.cursor.sessionId,
-						params.cursor.lastActivityAt,
-						params.cursor.sessionId,
-						params.cursor.encodedCwd,
-						limitPlusOne,
-					)
-			: this.db
-					.query(`${baseSelect} ${orderBy}`)
-					.all(limitPlusOne);
-
-		const typedRows = rows as SessionSummaryRow[];
-		const hasMore = typedRows.length > limit;
-		const pageRows = hasMore ? typedRows.slice(0, limit) : typedRows;
-		const items = pageRows.map((row) => this.mapSessionSummaryRow(row));
+		const items = filtered.slice(0, limit);
+		const hasMore = filtered.length > limit;
 		const last = items.at(-1);
 
 		return {
@@ -450,7 +457,8 @@ export class ManagerRepository {
 			)
 			.all() as SessionSummaryRow[];
 
-		return rows.map((row) => this.mapSessionSummaryRow(row));
+		const collapsed = this.collapseSessionSummaryRows(rows);
+		return collapsed.map((row) => this.mapSessionSummaryRow(row));
 	}
 
 	getSessionMetadata(
@@ -500,7 +508,8 @@ export class ManagerRepository {
 			)
 			.all(sessionId) as SessionSummaryRow[];
 
-		return rows.map((row) => this.mapSessionSummaryRow(row));
+		const collapsed = this.collapseSessionSummaryRows(rows);
+		return collapsed.map((row) => this.mapSessionSummaryRow(row));
 	}
 
 	recordEvent(params: {
@@ -685,6 +694,331 @@ export class ManagerRepository {
 			worktreePath: row.worktree_path ?? undefined,
 			branch: row.branch ?? undefined,
 		};
+	}
+
+	private collapseSessionSummaryRows(
+		rows: SessionSummaryRow[],
+	): SessionSummaryRow[] {
+		const grouped = new Map<string, SessionSummaryRow[]>();
+		for (const row of rows) {
+			const key = `${row.session_id}\u0000${row.cwd}`;
+			const bucket = grouped.get(key);
+			if (bucket) {
+				bucket.push(row);
+			} else {
+				grouped.set(key, [row]);
+			}
+		}
+
+		const collapsed: SessionSummaryRow[] = [];
+		for (const groupRows of grouped.values()) {
+			collapsed.push(this.mergeSessionVariantGroup(groupRows));
+		}
+
+		collapsed.sort((a, b) => this.compareSessionSummaryRows(a, b));
+		return collapsed;
+	}
+
+	private collapseDuplicateSessionVariants(): void {
+		const groups = this.db
+			.query(
+				`SELECT session_id, cwd
+				FROM session_metadata
+				GROUP BY session_id, cwd
+				HAVING COUNT(*) > 1`,
+			)
+			.all() as Array<{ session_id: string; cwd: string }>;
+
+		for (const group of groups) {
+			const rows = this.db
+				.query(
+					`SELECT
+						sm.session_id,
+						sm.encoded_cwd,
+						sm.cwd,
+						sm.title,
+						sm.created_at,
+						sm.updated_at,
+						sm.last_activity_at,
+						sm.source,
+						sm.total_cost_usd,
+						sm.repo_id,
+						sm.worktree_path,
+						sm.branch,
+						COALESCE(fi.message_count, 0) AS message_count
+					FROM session_metadata sm
+					LEFT JOIN session_file_index fi
+						ON fi.session_id = sm.session_id AND fi.encoded_cwd = sm.encoded_cwd
+					WHERE sm.session_id = ? AND sm.cwd = ?`,
+				)
+				.all(group.session_id, group.cwd) as SessionSummaryRow[];
+			if (rows.length < 2) continue;
+
+			const merged = this.mergeSessionVariantGroup(rows);
+			const variants = rows.map((row) => row.encoded_cwd);
+			const nonCanonical = variants.filter(
+				(encodedCwd) => encodedCwd !== merged.encoded_cwd,
+			);
+
+			this.db
+				.query(
+					`INSERT OR REPLACE INTO session_metadata (
+						session_id, encoded_cwd, cwd, title, created_at, updated_at, last_activity_at, source, total_cost_usd, repo_id, worktree_path, branch
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				)
+				.run(
+					merged.session_id,
+					merged.encoded_cwd,
+					merged.cwd,
+					merged.title,
+					merged.created_at,
+					merged.updated_at,
+					merged.last_activity_at,
+					merged.source,
+					merged.total_cost_usd,
+					merged.repo_id,
+					merged.worktree_path,
+					merged.branch,
+				);
+
+			const fileIndexRows = this.getFileIndexRowsByVariants(
+				group.session_id,
+				variants,
+			);
+			if (fileIndexRows.length > 0) {
+				const bestFileIndex = this.pickPreferredFileIndexRow(fileIndexRows);
+				this.db
+					.query(
+						`INSERT OR REPLACE INTO session_file_index (
+							session_id, encoded_cwd, jsonl_path, file_mtime_ms, file_size,
+							message_count, first_user_text, last_assistant_text, last_indexed_at
+						) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					)
+					.run(
+						group.session_id,
+						merged.encoded_cwd,
+						bestFileIndex.jsonl_path,
+						bestFileIndex.file_mtime_ms,
+						bestFileIndex.file_size,
+						bestFileIndex.message_count,
+						bestFileIndex.first_user_text,
+						bestFileIndex.last_assistant_text,
+						bestFileIndex.last_indexed_at,
+					);
+			}
+
+			if (nonCanonical.length === 0) continue;
+
+			this.updateSessionEventEncodedCwd(
+				group.session_id,
+				variants,
+				merged.encoded_cwd,
+			);
+			this.deleteMetadataByVariants(group.session_id, nonCanonical);
+			this.deleteFileIndexByVariants(group.session_id, nonCanonical);
+		}
+	}
+
+	private getFileIndexRowsByVariants(
+		sessionId: string,
+		variants: string[],
+	): FileIndexRow[] {
+		if (variants.length === 0) return [];
+		const placeholders = variants.map(() => "?").join(", ");
+		return this.db
+			.query(
+				`SELECT *
+				FROM session_file_index
+				WHERE session_id = ? AND encoded_cwd IN (${placeholders})`,
+			)
+			.all(sessionId, ...variants) as FileIndexRow[];
+	}
+
+	private pickPreferredFileIndexRow(rows: FileIndexRow[]): FileIndexRow {
+		let best = rows[0]!;
+		for (let i = 1; i < rows.length; i++) {
+			const candidate = rows[i]!;
+			if (candidate.message_count !== best.message_count) {
+				if (candidate.message_count > best.message_count) {
+					best = candidate;
+				}
+				continue;
+			}
+			if (candidate.file_mtime_ms !== best.file_mtime_ms) {
+				if (candidate.file_mtime_ms > best.file_mtime_ms) {
+					best = candidate;
+				}
+				continue;
+			}
+			if (candidate.last_indexed_at !== best.last_indexed_at) {
+				if (candidate.last_indexed_at > best.last_indexed_at) {
+					best = candidate;
+				}
+				continue;
+			}
+			if (candidate.file_size > best.file_size) {
+				best = candidate;
+			}
+		}
+		return best;
+	}
+
+	private updateSessionEventEncodedCwd(
+		sessionId: string,
+		variants: string[],
+		canonicalEncodedCwd: string,
+	): void {
+		if (variants.length === 0) return;
+		const placeholders = variants.map(() => "?").join(", ");
+		this.db
+			.query(
+				`UPDATE session_events
+				SET encoded_cwd = ?
+				WHERE session_id = ? AND encoded_cwd IN (${placeholders})`,
+			)
+			.run(canonicalEncodedCwd, sessionId, ...variants);
+	}
+
+	private deleteMetadataByVariants(sessionId: string, variants: string[]): void {
+		if (variants.length === 0) return;
+		const placeholders = variants.map(() => "?").join(", ");
+		this.db
+			.query(
+				`DELETE FROM session_metadata
+				WHERE session_id = ? AND encoded_cwd IN (${placeholders})`,
+			)
+			.run(sessionId, ...variants);
+	}
+
+	private deleteFileIndexByVariants(sessionId: string, variants: string[]): void {
+		if (variants.length === 0) return;
+		const placeholders = variants.map(() => "?").join(", ");
+		this.db
+			.query(
+				`DELETE FROM session_file_index
+				WHERE session_id = ? AND encoded_cwd IN (${placeholders})`,
+			)
+			.run(sessionId, ...variants);
+	}
+
+	private mergeSessionVariantGroup(rows: SessionSummaryRow[]): SessionSummaryRow {
+		if (rows.length === 1) return rows[0]!;
+
+		let preferredEncodedRow = rows[0]!;
+		let latestRow = rows[0]!;
+		let repoRow = rows[0]!;
+		let minCreatedAt = rows[0]!.created_at;
+		let maxUpdatedAt = rows[0]!.updated_at;
+		let maxLastActivityAt = rows[0]!.last_activity_at;
+		let maxMessageCount = rows[0]!.message_count;
+		let maxTotalCostUsd = rows[0]!.total_cost_usd;
+		let source: SessionSummaryRow["source"] = rows[0]!.source;
+
+		for (let i = 1; i < rows.length; i++) {
+			const row = rows[i]!;
+			if (this.compareVariantPriority(row, preferredEncodedRow) > 0) {
+				preferredEncodedRow = row;
+			}
+			if (
+				row.last_activity_at > latestRow.last_activity_at ||
+				(row.last_activity_at === latestRow.last_activity_at &&
+					row.updated_at > latestRow.updated_at)
+			) {
+				latestRow = row;
+			}
+			if (this.isRepoRowBetter(row, repoRow)) {
+				repoRow = row;
+			}
+			if (row.source !== source) {
+				source = "merged";
+			}
+			minCreatedAt = Math.min(minCreatedAt, row.created_at);
+			maxUpdatedAt = Math.max(maxUpdatedAt, row.updated_at);
+			maxLastActivityAt = Math.max(maxLastActivityAt, row.last_activity_at);
+			maxMessageCount = Math.max(maxMessageCount, row.message_count);
+			maxTotalCostUsd = Math.max(maxTotalCostUsd, row.total_cost_usd);
+		}
+
+		return {
+			...preferredEncodedRow,
+			title: latestRow.title,
+			created_at: minCreatedAt,
+			updated_at: maxUpdatedAt,
+			last_activity_at: maxLastActivityAt,
+			source,
+			total_cost_usd: maxTotalCostUsd,
+			message_count: maxMessageCount,
+			repo_id: repoRow.repo_id,
+			worktree_path: repoRow.worktree_path,
+			branch: repoRow.branch,
+		};
+	}
+
+	private compareVariantPriority(
+		candidate: SessionSummaryRow,
+		current: SessionSummaryRow,
+	): number {
+		if (candidate.message_count !== current.message_count) {
+			return candidate.message_count - current.message_count;
+		}
+		const candidateSourceScore = candidate.source === "jsonl" ? 0 : 1;
+		const currentSourceScore = current.source === "jsonl" ? 0 : 1;
+		if (candidateSourceScore !== currentSourceScore) {
+			return candidateSourceScore - currentSourceScore;
+		}
+		if (candidate.last_activity_at !== current.last_activity_at) {
+			return candidate.last_activity_at - current.last_activity_at;
+		}
+		if (candidate.updated_at !== current.updated_at) {
+			return candidate.updated_at - current.updated_at;
+		}
+		return candidate.encoded_cwd.localeCompare(current.encoded_cwd);
+	}
+
+	private hasRepoInfo(row: SessionSummaryRow): boolean {
+		return (
+			typeof row.repo_id === "string" ||
+			typeof row.worktree_path === "string" ||
+			typeof row.branch === "string"
+		);
+	}
+
+	private isRepoRowBetter(
+		candidate: SessionSummaryRow,
+		current: SessionSummaryRow,
+	): boolean {
+		const candidateHasRepo = this.hasRepoInfo(candidate);
+		const currentHasRepo = this.hasRepoInfo(current);
+		if (candidateHasRepo !== currentHasRepo) {
+			return candidateHasRepo;
+		}
+		if (candidate.last_activity_at !== current.last_activity_at) {
+			return candidate.last_activity_at > current.last_activity_at;
+		}
+		return candidate.updated_at > current.updated_at;
+	}
+
+	private compareSessionSummaryRows(
+		a: SessionSummaryRow,
+		b: SessionSummaryRow,
+	): number {
+		if (a.last_activity_at !== b.last_activity_at) {
+			return b.last_activity_at - a.last_activity_at;
+		}
+		const sessionCmp = b.session_id.localeCompare(a.session_id);
+		if (sessionCmp !== 0) return sessionCmp;
+		return b.encoded_cwd.localeCompare(a.encoded_cwd);
+	}
+
+	private isBeforeSessionCursor(
+		session: SessionSummary,
+		cursor: SessionListCursor,
+	): boolean {
+		if (session.lastActivityAt < cursor.lastActivityAt) return true;
+		if (session.lastActivityAt > cursor.lastActivityAt) return false;
+		if (session.sessionId < cursor.sessionId) return true;
+		if (session.sessionId > cursor.sessionId) return false;
+		return session.encodedCwd < cursor.encodedCwd;
 	}
 
 	close(): void {

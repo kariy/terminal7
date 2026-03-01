@@ -73,4 +73,62 @@ describe("ClaudeJsonlIndexer", () => {
 		expect(history2.messages[0]?.content_blocks).toEqual([{ type: "text", text: "hi there" }]);
 		repository.close();
 	});
+
+	test("reuses existing encoded_cwd variant for same session/cwd to avoid duplicates", () => {
+		const { repository, projects } = setup();
+		const sessionId = "123e4567-e89b-12d3-a456-426614174999";
+		const canonicalEncodedCwd =
+			"-Users-kariy-.cc-manager-projects-worktrees-demo";
+		const incomingEncodedCwd =
+			"-Users-kariy--cc-manager-projects-worktrees-demo";
+		const cwd = "/Users/kariy/.cc-manager/projects/worktrees/demo";
+
+		// Existing DB-tracked variant from live session usage.
+		repository.upsertSessionMetadata({
+			sessionId,
+			encodedCwd: canonicalEncodedCwd,
+			cwd,
+			title: "Live title",
+			source: "db",
+			lastActivityAt: 2_000,
+		});
+
+		// JSONL discovered under a different encoded_cwd variant.
+		const incomingDir = join(projects, incomingEncodedCwd);
+		mkdirSync(incomingDir, { recursive: true });
+		const jsonl = [
+			JSON.stringify({
+				type: "user",
+				uuid: "u1",
+				cwd,
+				message: { content: [{ type: "text", text: "hello from jsonl" }] },
+			}),
+			JSON.stringify({
+				type: "assistant",
+				uuid: "a1",
+				message: { content: [{ type: "text", text: "hi" }] },
+			}),
+		].join("\n");
+		writeFileSync(join(incomingDir, `${sessionId}.jsonl`), jsonl, "utf8");
+
+		const indexer = new ClaudeJsonlIndexer(projects, repository, 100);
+		const stats = indexer.refreshIndex();
+		expect(stats.indexed).toBe(1);
+
+		// We should still have a single logical session.
+		const sessions = repository.listSessions();
+		expect(sessions.length).toBe(1);
+		expect(sessions[0]?.sessionId).toBe(sessionId);
+		expect(sessions[0]?.encodedCwd).toBe(canonicalEncodedCwd);
+		expect(sessions[0]?.messageCount).toBe(2);
+
+		// File index should be written to canonical variant (with actual incoming jsonl_path).
+		const canonicalIndex = repository.getFileIndex(sessionId, canonicalEncodedCwd);
+		expect(canonicalIndex).toBeTruthy();
+		expect(canonicalIndex?.jsonl_path).toBe(
+			join(incomingDir, `${sessionId}.jsonl`),
+		);
+
+		repository.close();
+	});
 });

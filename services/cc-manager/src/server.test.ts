@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "fs";
+import { join } from "path";
 import {
 	createTestServer,
 	destroyTestServer,
@@ -189,6 +191,80 @@ describe("GET / and GET /sessions/*", () => {
 	test("GET /sessions/some-id returns 200", async () => {
 		const res = await fetch(`${ctx.baseUrl}/sessions/some-id`);
 		expect(res.status).toBe(200);
+	});
+});
+
+describe("GET /v1/sessions/:id/history", () => {
+	test("falls back when encoded_cwd query param is stale and still returns history", async () => {
+		const historyCtx = createTestServer({ withIndexer: true });
+		const sessionId = "sess-history-fallback";
+		const canonicalEncodedCwd = "-Users-kariy-.cc-manager-projects-worktrees-abc";
+		const staleEncodedCwd = "-Users-kariy--cc-manager-projects-worktrees-abc";
+		const cwd = "/Users/kariy/.cc-manager/projects/worktrees/abc";
+		try {
+			const sessionDir = join(
+				historyCtx.config.claudeProjectsDir,
+				canonicalEncodedCwd,
+			);
+			const jsonlPath = join(sessionDir, `${sessionId}.jsonl`);
+
+			mkdirSync(sessionDir, { recursive: true });
+			writeFileSync(
+				jsonlPath,
+				[
+					JSON.stringify({
+						type: "user",
+						uuid: "u1",
+						cwd,
+						message: { content: [{ type: "text", text: "hello" }] },
+					}),
+					JSON.stringify({
+						type: "assistant",
+						uuid: "a1",
+						message: { content: [{ type: "text", text: "hi" }] },
+					}),
+				].join("\n"),
+				"utf8",
+			);
+
+			historyCtx.repository.upsertSessionMetadata({
+				sessionId,
+				encodedCwd: canonicalEncodedCwd,
+				cwd,
+				title: "History fallback",
+				source: "db",
+			});
+			historyCtx.repository.upsertJsonlIndex({
+				sessionId,
+				encodedCwd: canonicalEncodedCwd,
+				cwd,
+				title: "History fallback",
+				lastActivityAt: Date.now(),
+				messageCount: 2,
+				jsonlPath,
+				fileSize: 100,
+				fileMtimeMs: Date.now(),
+			});
+
+			const res = await fetch(
+				`${historyCtx.baseUrl}/v1/sessions/${encodeURIComponent(sessionId)}/history?encoded_cwd=${encodeURIComponent(staleEncodedCwd)}`,
+			);
+			expect(res.status).toBe(200);
+			const body = (await res.json()) as {
+				session_id: string;
+				encoded_cwd: string;
+				total_messages: number;
+				messages: Array<{ role: string; text: string }>;
+			};
+			expect(body.session_id).toBe(sessionId);
+			expect(body.encoded_cwd).toBe(canonicalEncodedCwd);
+			expect(body.total_messages).toBe(2);
+			expect(body.messages.length).toBe(2);
+			expect(body.messages[0]?.role).toBe("user");
+			expect(body.messages[0]?.text).toBe("hello");
+		} finally {
+			destroyTestServer(historyCtx);
+		}
 	});
 });
 

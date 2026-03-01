@@ -73,10 +73,15 @@ export class ClaudeJsonlIndexer {
 				try {
 					const parsed = this.parseSessionJsonl(jsonlPath);
 					const cwd = parsed.cwd ?? decodeEncodedCwd(encodedCwd);
+					const canonicalEncodedCwd = this.resolveCanonicalEncodedCwd(
+						sessionId,
+						cwd,
+						encodedCwd,
+					);
 
 					this.repository.upsertSessionMetadata({
 						sessionId,
-						encodedCwd,
+						encodedCwd: canonicalEncodedCwd,
 						cwd,
 						title:
 							parsed.firstUserText.length > 0
@@ -93,7 +98,7 @@ export class ClaudeJsonlIndexer {
 					});
 					this.repository.upsertJsonlIndex({
 						sessionId,
-						encodedCwd,
+						encodedCwd: canonicalEncodedCwd,
 						cwd,
 						title: parsed.firstUserText,
 						lastActivityAt: Math.floor(fileStat.mtimeMs),
@@ -207,5 +212,36 @@ export class ClaudeJsonlIndexer {
 			firstUserText,
 			cwd,
 		};
+	}
+
+	private resolveCanonicalEncodedCwd(
+		sessionId: string,
+		cwd: string,
+		incomingEncodedCwd: string,
+	): string {
+		const variants = this.repository
+			.findSessionCandidates(sessionId)
+			.filter((candidate) => candidate.cwd === cwd);
+		if (variants.length === 0) return incomingEncodedCwd;
+		if (variants.some((candidate) => candidate.encodedCwd === incomingEncodedCwd)) {
+			return incomingEncodedCwd;
+		}
+
+		const sorted = [...variants].sort((a, b) => {
+			const aSourceScore = a.source === "jsonl" ? 0 : 1;
+			const bSourceScore = b.source === "jsonl" ? 0 : 1;
+			if (aSourceScore !== bSourceScore) {
+				return bSourceScore - aSourceScore;
+			}
+			if (a.messageCount !== b.messageCount) {
+				return b.messageCount - a.messageCount;
+			}
+			if (a.lastActivityAt !== b.lastActivityAt) {
+				return b.lastActivityAt - a.lastActivityAt;
+			}
+			return b.encodedCwd.localeCompare(a.encodedCwd);
+		});
+
+		return sorted[0]?.encodedCwd ?? incomingEncodedCwd;
 	}
 }

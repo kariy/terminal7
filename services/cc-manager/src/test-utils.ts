@@ -12,6 +12,7 @@ import type {
 import type { TerminalServiceLike, TerminalOpenParams, TerminalHandle } from "./terminal-service";
 import { ManagerRepository } from "./repository";
 import { createServer, type ServerHandle } from "./main";
+import { ClaudeJsonlIndexer } from "./jsonl-indexer";
 import type { ManagerConfig } from "./config";
 
 // ── MockClaudeService ───────────────────────────────────────────
@@ -101,6 +102,8 @@ export class MockTerminalService implements TerminalServiceLike {
 export class MockGitService implements GitServiceLike {
 	ensureRepoCalls: string[] = [];
 	worktreeCalls: CreateWorktreeOpts[] = [];
+	verifyWorktreeCalls: Array<{ bareRepoPath: string; worktreePath: string }> = [];
+	verifyWorktreeError: Error | null = null;
 	removeWorktreeCalls: string[] = [];
 
 	async ensureRepo(url: string, projectsDir: string): Promise<RepoInfo> {
@@ -127,6 +130,16 @@ export class MockGitService implements GitServiceLike {
 		worktreePath: string,
 	): Promise<void> {
 		this.removeWorktreeCalls.push(worktreePath);
+	}
+
+	async verifyWorktree(
+		bareRepoPath: string,
+		worktreePath: string,
+	): Promise<void> {
+		this.verifyWorktreeCalls.push({ bareRepoPath, worktreePath });
+		if (this.verifyWorktreeError) {
+			throw this.verifyWorktreeError;
+		}
 	}
 
 	async listBranches(_bareRepoPath: string): Promise<string[]> {
@@ -209,6 +222,7 @@ export interface TestContext {
 	terminalService?: MockTerminalService;
 	gitService?: MockGitService;
 	fileIndexService: MockFileIndexService;
+	indexer?: ClaudeJsonlIndexer;
 	config: ManagerConfig;
 	tempDir: string;
 }
@@ -217,10 +231,11 @@ export interface CreateTestServerOptions {
 	configOverrides?: Partial<ManagerConfig>;
 	withTerminalService?: boolean;
 	withGitService?: boolean;
+	withIndexer?: boolean;
 }
 
 export function createTestServer(overridesOrOpts?: Partial<ManagerConfig> | CreateTestServerOptions): TestContext {
-	const isOpts = overridesOrOpts && ("configOverrides" in overridesOrOpts || "withTerminalService" in overridesOrOpts || "withGitService" in overridesOrOpts);
+	const isOpts = overridesOrOpts && ("configOverrides" in overridesOrOpts || "withTerminalService" in overridesOrOpts || "withGitService" in overridesOrOpts || "withIndexer" in overridesOrOpts);
 	const opts = isOpts ? (overridesOrOpts as CreateTestServerOptions) : undefined;
 	const overrides = isOpts ? opts?.configOverrides : overridesOrOpts as Partial<ManagerConfig> | undefined;
 
@@ -244,11 +259,19 @@ export function createTestServer(overridesOrOpts?: Partial<ManagerConfig> | Crea
 	const terminalService = opts?.withTerminalService ? new MockTerminalService() : undefined;
 	const gitService = opts?.withGitService ? new MockGitService() : undefined;
 	const fileIndexService = new MockFileIndexService();
+	const indexer = opts?.withIndexer
+		? new ClaudeJsonlIndexer(
+				config.claudeProjectsDir,
+				repository,
+				config.maxHistoryMessages,
+			)
+		: undefined;
 
 	const handle = createServer({
 		config,
 		repository,
 		claudeService,
+		indexer,
 		terminalService,
 		gitService,
 		fileIndexService,
@@ -264,6 +287,7 @@ export function createTestServer(overridesOrOpts?: Partial<ManagerConfig> | Crea
 		terminalService,
 		gitService,
 		fileIndexService,
+		indexer,
 		config,
 		tempDir,
 	};
