@@ -110,6 +110,44 @@ type Action =
   | { type: "SET_SSH_CONNECTIONS"; connections: SshConnectionItem[] }
   | { type: "CLOSE_TERMINAL" };
 
+function isSdkStreamContentBlock(block: ContentBlockState): boolean {
+  return (
+    block.type === "text" ||
+    block.type === "tool_use" ||
+    block.type === "thinking"
+  );
+}
+
+function findStreamBlockInsertIndex(
+  blocks: ContentBlockState[],
+  streamIndex: number,
+): number {
+  let seenStreamBlocks = 0;
+  for (let i = 0; i < blocks.length; i++) {
+    if (!isSdkStreamContentBlock(blocks[i])) continue;
+    if (seenStreamBlocks === streamIndex) {
+      return i;
+    }
+    seenStreamBlocks += 1;
+  }
+  return blocks.length;
+}
+
+function findStreamBlockArrayIndex(
+  blocks: ContentBlockState[],
+  streamIndex: number,
+): number {
+  let seenStreamBlocks = 0;
+  for (let i = 0; i < blocks.length; i++) {
+    if (!isSdkStreamContentBlock(blocks[i])) continue;
+    if (seenStreamBlocks === streamIndex) {
+      return i;
+    }
+    seenStreamBlocks += 1;
+  }
+  return -1;
+}
+
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "SET_CONNECTED":
@@ -331,9 +369,17 @@ function reducer(state: AppState, action: Action): AppState {
             ) {
               return m;
             }
+
+            const nextBlocks = [...m.contentBlocks];
+            const insertIndex = findStreamBlockInsertIndex(
+              nextBlocks,
+              event.index,
+            );
+            nextBlocks.splice(insertIndex, 0, newBlock);
+
             return {
               ...m,
-              contentBlocks: [...m.contentBlocks, newBlock],
+              contentBlocks: nextBlocks,
               streamStartTime: m.streamStartTime ?? Date.now(),
             };
           });
@@ -345,15 +391,20 @@ function reducer(state: AppState, action: Action): AppState {
           const msgs = state.messages.map((m) => {
             if (m.requestId !== action.requestId) return m;
             const blocks = [...m.contentBlocks];
-            const target = blocks[index];
+            const targetIndex = findStreamBlockArrayIndex(blocks, index);
+            if (targetIndex < 0) return m;
+            const target = blocks[targetIndex];
             if (!target) return m;
 
             if (delta.type === "text_delta") {
-              blocks[index] = { ...target, text: target.text + delta.text };
+              blocks[targetIndex] = { ...target, text: target.text + delta.text };
             } else if (delta.type === "input_json_delta") {
-              blocks[index] = { ...target, toolInput: (target.toolInput ?? "") + delta.partial_json };
+              blocks[targetIndex] = {
+                ...target,
+                toolInput: (target.toolInput ?? "") + delta.partial_json,
+              };
             } else if (delta.type === "thinking_delta") {
-              blocks[index] = { ...target, text: target.text + delta.thinking };
+              blocks[targetIndex] = { ...target, text: target.text + delta.thinking };
             }
             return { ...m, contentBlocks: blocks };
           });
@@ -364,9 +415,11 @@ function reducer(state: AppState, action: Action): AppState {
           const msgs = state.messages.map((m) => {
             if (m.requestId !== action.requestId) return m;
             const blocks = [...m.contentBlocks];
-            const target = blocks[event.index];
+            const targetIndex = findStreamBlockArrayIndex(blocks, event.index);
+            if (targetIndex < 0) return m;
+            const target = blocks[targetIndex];
             if (!target) return m;
-            blocks[event.index] = { ...target, isComplete: true };
+            blocks[targetIndex] = { ...target, isComplete: true };
             return { ...m, contentBlocks: blocks };
           });
           return { ...state, messages: msgs };
