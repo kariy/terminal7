@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type {
   ContentBlockState,
   RespondPermissionHandler,
   ToolPermissionRequestState,
 } from "@/types/chat";
+import { copyText } from "@/lib/clipboard";
 import { TextBlock } from "./blocks/TextBlock";
 import { ToolCallBlock } from "./blocks/ToolCallBlock";
 import { ThinkingBlock } from "./blocks/ThinkingBlock";
@@ -29,6 +30,7 @@ export function MessageBubble({
   isStreaming,
 }: MessageBubbleProps) {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const copyResetTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -40,20 +42,25 @@ export function MessageBubble({
   }, []);
 
   const handleCopyRawJson = async () => {
-    if (!navigator.clipboard) return;
+    const textToCopy =
+      JSON.stringify(rawJson, null, 2) ?? String(rawJson ?? "");
+    const result = await copyText(textToCopy);
 
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(rawJson, null, 2));
+    if (result.ok) {
       setCopied(true);
-      if (copyResetTimerRef.current != null) {
-        window.clearTimeout(copyResetTimerRef.current);
-      }
-      copyResetTimerRef.current = window.setTimeout(() => {
-        setCopied(false);
-      }, 1500);
-    } catch {
-      // no-op: clipboard can fail in restricted environments
+      setCopyFailed(false);
+    } else {
+      setCopied(false);
+      setCopyFailed(true);
     }
+
+    if (copyResetTimerRef.current != null) {
+      window.clearTimeout(copyResetTimerRef.current);
+    }
+    copyResetTimerRef.current = window.setTimeout(() => {
+      setCopied(false);
+      setCopyFailed(false);
+    }, 1500);
   };
 
   if (role === "user") {
@@ -64,7 +71,11 @@ export function MessageBubble({
     return (
       <div className="flex justify-end">
         <div className="relative max-w-[80%] pl-3.5 pr-10 py-2.5 rounded-2xl text-sm leading-relaxed break-words bg-user-bubble rounded-br-sm">
-          <CopyRawJsonButton copied={copied} onClick={handleCopyRawJson} />
+          <CopyRawJsonButton
+            copied={copied}
+            copyFailed={copyFailed}
+            onClick={handleCopyRawJson}
+          />
           <TextBlock text={text} />
         </div>
       </div>
@@ -84,7 +95,11 @@ export function MessageBubble({
   return (
     <div className="flex justify-start">
       <div className="relative max-w-[90%] pl-3.5 pr-10 py-2.5 rounded-2xl rounded-bl-sm bg-card border border-border text-sm leading-relaxed break-words">
-        <CopyRawJsonButton copied={copied} onClick={handleCopyRawJson} />
+        <CopyRawJsonButton
+          copied={copied}
+          copyFailed={copyFailed}
+          onClick={handleCopyRawJson}
+        />
         {visibleBlocks.map((block, i) => {
           if (block.type === "text") {
             return (
@@ -158,21 +173,45 @@ function findPermissionRequestForTool(
   return undefined;
 }
 
-function CopyRawJsonButton({ copied, onClick }: { copied: boolean; onClick: () => void }) {
+function CopyRawJsonButton({
+  copied,
+  copyFailed,
+  onClick,
+}: {
+  copied: boolean;
+  copyFailed: boolean;
+  onClick: () => void;
+}) {
+  const title = copied
+    ? "Copied JSON"
+    : copyFailed
+      ? "Copy failed"
+      : "Copy raw JSON";
+
   return (
     <Button
       type="button"
       variant="ghost"
       size="icon"
-      className="absolute z-20 top-1.5 right-1.5 h-6 w-6 rounded-full text-muted-foreground/70 hover:text-foreground hover:bg-secondary/70"
+      className={`absolute z-20 top-1.5 right-1.5 h-6 w-6 rounded-full hover:bg-secondary/70 ${
+        copyFailed
+          ? "text-destructive hover:text-destructive"
+          : "text-muted-foreground/70 hover:text-foreground"
+      }`}
       onClick={(event) => {
         event.stopPropagation();
         onClick();
       }}
-      title={copied ? "Copied JSON" : "Copy raw JSON"}
-      aria-label={copied ? "Copied JSON" : "Copy raw JSON"}
+      title={title}
+      aria-label={title}
     >
-      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? (
+        <Check className="h-3.5 w-3.5" />
+      ) : copyFailed ? (
+        <X className="h-3.5 w-3.5" />
+      ) : (
+        <Copy className="h-3.5 w-3.5" />
+      )}
     </Button>
   );
 }
