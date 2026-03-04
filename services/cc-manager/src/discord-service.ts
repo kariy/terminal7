@@ -73,13 +73,26 @@ export class DiscordService {
 		const stripMention = (text: string) =>
 			text.replace(new RegExp(`<@!?${this.client!.user!.id}>`, "g"), "").trim();
 
+		// Fetch replied-to message content if this is a reply
+		let replyContext = "";
+		if (message.reference?.messageId) {
+			try {
+				const replied = await message.fetchReference();
+				if (replied.content) {
+					replyContext = `[Replied-to message from ${replied.author.displayName}]:\n${replied.content}\n\n`;
+				}
+			} catch {
+				// Could not fetch referenced message
+			}
+		}
+
 		// In threads we manage, respond to all messages (no mention needed)
 		if (message.channel.isThread()) {
 			const threadId = message.channel.id;
 			const mapping = this.repository.getDiscordThreadSession(threadId);
 			if (!mapping) return;
 
-			const prompt = stripMention(message.content);
+			const prompt = replyContext + stripMention(message.content);
 			if (!prompt) return;
 
 			this.enqueueForThread(threadId, () =>
@@ -96,7 +109,7 @@ export class DiscordService {
 		// In channels, require a mention to start a new thread
 		if (!message.mentions.has(this.client.user.id)) return;
 
-		const prompt = stripMention(message.content);
+		const prompt = replyContext + stripMention(message.content);
 		if (!prompt) return;
 
 		{
