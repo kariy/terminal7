@@ -8,6 +8,7 @@ import type {
 } from "@/types/chat";
 import { copyText } from "@/lib/clipboard";
 import { TextBlock } from "./blocks/TextBlock";
+import { ToolCallBlock } from "./blocks/ToolCallBlock";
 import { ToolCallGroup } from "./blocks/ToolCallGroup";
 import { ThinkingBlock } from "./blocks/ThinkingBlock";
 import { TypingBarsLoader } from "./blocks/TypingBarsLoader";
@@ -16,16 +17,36 @@ type Segment =
   | { type: "block"; block: ContentBlockState; index: number }
   | { type: "tool_group"; blocks: ContentBlockState[]; startIndex: number };
 
-function segmentBlocks(blocks: ContentBlockState[]): Segment[] {
+function hasInteractivePending(
+  block: ContentBlockState,
+  permissionRequests: ToolPermissionRequestState[],
+): boolean {
+  const pr = findPermissionRequestForTool(permissionRequests, block.toolId);
+  return pr?.status === "pending";
+}
+
+function segmentBlocks(
+  blocks: ContentBlockState[],
+  permissionRequests: ToolPermissionRequestState[],
+): Segment[] {
   const segments: Segment[] = [];
   let i = 0;
   while (i < blocks.length) {
     if (blocks[i].type === "tool_use") {
-      const start = i;
-      while (i < blocks.length && blocks[i].type === "tool_use") {
+      if (hasInteractivePending(blocks[i], permissionRequests)) {
+        segments.push({ type: "block", block: blocks[i], index: i });
         i++;
+      } else {
+        const start = i;
+        while (
+          i < blocks.length &&
+          blocks[i].type === "tool_use" &&
+          !hasInteractivePending(blocks[i], permissionRequests)
+        ) {
+          i++;
+        }
+        segments.push({ type: "tool_group", blocks: blocks.slice(start, i), startIndex: start });
       }
-      segments.push({ type: "tool_group", blocks: blocks.slice(start, i), startIndex: start });
     } else {
       segments.push({ type: "block", block: blocks[i], index: i });
       i++;
@@ -122,7 +143,7 @@ export function MessageBubble({
           copyFailed={copyFailed}
           onClick={handleCopyRawJson}
         />
-        {segmentBlocks(visibleBlocks).map((segment, si, segments) => {
+        {segmentBlocks(visibleBlocks, permissionRequests).map((segment, si, segments) => {
           const prevSeg = segments[si - 1];
           const nextSeg = segments[si + 1];
           const prevType = prevSeg
@@ -151,6 +172,26 @@ export function MessageBubble({
 
           if (block.type === "text") {
             return <TextBlock key={index} text={block.text} />;
+          }
+
+          if (block.type === "tool_use") {
+            const result = block.toolId ? toolResults.get(block.toolId) : undefined;
+            const permissionRequest = findPermissionRequestForTool(
+              permissionRequests,
+              block.toolId,
+            );
+            return (
+              <ToolCallBlock
+                key={index}
+                block={block}
+                result={result}
+                permissionRequest={permissionRequest}
+                onRespondPermission={onRespondPermission}
+                isStreaming={isStreaming}
+                extraTopSpace={prevType === "text"}
+                extraBottomSpace={nextType === "text"}
+              />
+            );
           }
 
           if (block.type === "thinking") {
