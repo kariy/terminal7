@@ -151,10 +151,34 @@ export class DiscordService {
 	): Promise<void> {
 		const requestId = crypto.randomUUID();
 		const ecwd = encodeCwd(cwd);
-		let accumulatedText = "";
+		let currentTurnText = "";
 		let totalCostUsd = 0;
 		let resolvedSessionId = resumeSessionId;
 		let placeholderMessage: Message | null = null;
+		let placeholderDeleted = false;
+		const sendQueue: Array<() => Promise<void>> = [];
+
+		const deletePlaceholder = async () => {
+			if (placeholderMessage && !placeholderDeleted) {
+				placeholderDeleted = true;
+				try {
+					await placeholderMessage.delete();
+				} catch {
+					// Already deleted or no permissions
+				}
+			}
+		};
+
+		const flushTurnText = async () => {
+			const text = currentTurnText.trim();
+			currentTurnText = "";
+			if (!text) return;
+			await deletePlaceholder();
+			const chunks = splitMessage(text);
+			for (const chunk of chunks) {
+				await thread.send(chunk);
+			}
+		};
 
 		try {
 			await this.claudeService.streamPrompt({
@@ -195,7 +219,15 @@ export class DiscordService {
 						message.event.type === "content_block_delta" &&
 						(message.event.delta as { type: string }).type === "text_delta"
 					) {
-						accumulatedText += (message.event.delta as { type: string; text: string }).text;
+						currentTurnText += (message.event.delta as { type: string; text: string }).text;
+					}
+
+					// On message_stop, flush accumulated text as a separate Discord message
+					if (
+						message.type === "stream_event" &&
+						message.event.type === "message_stop"
+					) {
+						sendQueue.push(() => flushTurnText());
 					}
 
 					if (
@@ -215,24 +247,14 @@ export class DiscordService {
 					this.handlePermission(thread, request),
 			});
 
-			// Delete placeholder
-			if (placeholderMessage) {
-				try {
-					await (placeholderMessage as Message).delete();
-				} catch {
-					// Already deleted or no permissions
-				}
+			// Process any queued sends
+			for (const fn of sendQueue) {
+				await fn();
 			}
 
-			// Send accumulated text
-			if (accumulatedText.trim()) {
-				const chunks = splitMessage(accumulatedText);
-				for (const chunk of chunks) {
-					await thread.send(chunk);
-				}
-			} else {
-				await thread.send("(No text response)");
-			}
+			// Flush any remaining text not followed by a message_stop
+			await flushTurnText();
+			await deletePlaceholder();
 
 			// Update session metadata with cost
 			if (resolvedSessionId) {
