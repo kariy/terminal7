@@ -45,6 +45,27 @@ export function ToolInput({ toolName, toolInput }: ToolInputProps) {
   if (name === "websearch") {
     return <WebSearchInput data={parsed} />;
   }
+  if (name === "agent") {
+    return <AgentInput data={parsed} />;
+  }
+  if (name === "taskcreate") {
+    return <TaskCreateInput data={parsed} />;
+  }
+  if (name === "taskupdate") {
+    return <TaskUpdateInput data={parsed} />;
+  }
+  if (name === "taskget" || name === "taskoutput") {
+    return <TaskIdInput data={parsed} />;
+  }
+  if (name === "taskstop") {
+    return <TaskStopInput data={parsed} />;
+  }
+  if (name === "enterworktree") {
+    return <EnterWorktreeInput data={parsed} />;
+  }
+  if (name === "skill") {
+    return <SkillInput data={parsed} />;
+  }
 
   return <DefaultInput data={parsed} />;
 }
@@ -271,6 +292,98 @@ function WebSearchInput({ data }: { data: Record<string, unknown> }) {
   return (
     <div className="p-2 text-xs">
       <div className="font-mono">{String(data.query || "")}</div>
+    </div>
+  );
+}
+
+function AgentInput({ data }: { data: Record<string, unknown> }) {
+  const description = getNonEmptyString(data.description);
+  const prompt = getNonEmptyString(data.prompt);
+  const truncatedPrompt = prompt && prompt.length > 300 ? prompt.slice(0, 300) + "..." : prompt;
+  return (
+    <div className="p-2 text-xs space-y-1">
+      {description && <div className="font-medium">{description}</div>}
+      {truncatedPrompt && (
+        <pre className="font-mono whitespace-pre-wrap text-muted-foreground bg-muted/30 rounded px-2 py-1 max-h-32 overflow-y-auto">
+          {truncatedPrompt}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function TaskCreateInput({ data }: { data: Record<string, unknown> }) {
+  const subject = getNonEmptyString(data.subject);
+  const description = getNonEmptyString(data.description);
+  const truncatedDesc =
+    description && description.length > 200 ? description.slice(0, 200) + "..." : description;
+  return (
+    <div className="p-2 text-xs space-y-0.5">
+      {subject && <div className="font-medium">{subject}</div>}
+      {truncatedDesc && <div className="text-muted-foreground">{truncatedDesc}</div>}
+    </div>
+  );
+}
+
+function TaskUpdateInput({ data }: { data: Record<string, unknown> }) {
+  const taskId = getNonEmptyString(data.taskId);
+  const status = getNonEmptyString(data.status);
+  const subject = getNonEmptyString(data.subject);
+  const statusColor =
+    status === "completed"
+      ? "text-green-600"
+      : status === "in_progress"
+        ? "text-blue-600"
+        : status === "deleted"
+          ? "text-destructive"
+          : "text-muted-foreground";
+  return (
+    <div className="p-2 text-xs flex items-center gap-2 flex-wrap">
+      {taskId && <span className="font-mono">#{taskId}</span>}
+      {status && <span className={`font-medium ${statusColor}`}>{status}</span>}
+      {subject && <span className="text-muted-foreground truncate">{subject}</span>}
+    </div>
+  );
+}
+
+function TaskIdInput({ data }: { data: Record<string, unknown> }) {
+  const taskId = getNonEmptyString(data.taskId) || getNonEmptyString(data.task_id);
+  if (!taskId) return null;
+  return (
+    <div className="p-2 text-xs font-mono">
+      #{taskId}
+    </div>
+  );
+}
+
+function TaskStopInput({ data }: { data: Record<string, unknown> }) {
+  const taskId = getNonEmptyString(data.task_id);
+  const shellId = getNonEmptyString(data.shell_id);
+  return (
+    <div className="p-2 text-xs font-mono space-y-0.5">
+      {taskId && <div>#{taskId}</div>}
+      {shellId && <div className="text-muted-foreground">shell: {shellId}</div>}
+    </div>
+  );
+}
+
+function EnterWorktreeInput({ data }: { data: Record<string, unknown> }) {
+  const name = getNonEmptyString(data.name);
+  if (!name) return null;
+  return (
+    <div className="p-2 text-xs font-mono">
+      {name}
+    </div>
+  );
+}
+
+function SkillInput({ data }: { data: Record<string, unknown> }) {
+  const skill = getNonEmptyString(data.skill);
+  const args = getNonEmptyString(data.args);
+  return (
+    <div className="p-2 text-xs font-mono">
+      {skill && <span>/{skill}</span>}
+      {args && <span className="text-muted-foreground ml-1">{args}</span>}
     </div>
   );
 }

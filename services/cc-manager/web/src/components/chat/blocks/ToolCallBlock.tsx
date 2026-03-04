@@ -1,15 +1,26 @@
 import { useState } from "react";
 import {
+  Bot,
   ChevronDown,
   ChevronRight,
-  Terminal,
-  FileText,
-  Search,
+  ClipboardList,
+  GitBranch,
   Globe,
-  Wrench,
+  FileText,
+  List,
+  ListChecks,
+  ListPlus,
+  ListX,
   Loader2,
+  Map,
+  MessageCircleQuestion,
   Check,
+  Search,
+  SquareTerminal,
+  Terminal,
+  Wrench,
   X,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
@@ -41,6 +52,17 @@ const toolIcons: Record<string, typeof Terminal> = {
   glob: Search,
   webfetch: Globe,
   websearch: Globe,
+  agent: Bot,
+  taskcreate: ListPlus,
+  taskupdate: ListChecks,
+  taskget: ClipboardList,
+  tasklist: List,
+  taskoutput: SquareTerminal,
+  taskstop: ListX,
+  enterplanmode: Map,
+  enterworktree: GitBranch,
+  skill: Zap,
+  askuserquestion: MessageCircleQuestion,
 };
 
 function ToolIcon({ name }: { name: string }) {
