@@ -1,4 +1,5 @@
-import { join } from "path";
+import { realpathSync } from "fs";
+import { join, resolve } from "path";
 
 // ── Interfaces ──────────────────────────────────────────────────
 
@@ -24,6 +25,7 @@ export interface GitServiceLike {
 		bareRepoPath: string,
 		opts: CreateWorktreeOpts,
 	): Promise<WorktreeResult>;
+	verifyWorktree(bareRepoPath: string, worktreePath: string): Promise<void>;
 	removeWorktree(bareRepoPath: string, worktreePath: string): Promise<void>;
 	listBranches(bareRepoPath: string): Promise<string[]>;
 	getDefaultBranch(bareRepoPath: string): Promise<string>;
@@ -57,6 +59,14 @@ async function runGit(
 	const exitCode = await proc.exited;
 
 	return { stdout: stdout.trim(), stderr: stderr.trim(), exitCode };
+}
+
+function canonicalPath(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return resolve(path);
+	}
 }
 
 // ── Implementation ──────────────────────────────────────────────
@@ -129,6 +139,35 @@ export class GitService implements GitServiceLike {
 		}
 
 		return { worktreePath, branch };
+	}
+
+	async verifyWorktree(
+		bareRepoPath: string,
+		worktreePath: string,
+	): Promise<void> {
+		const listResult = await runGit(
+			["worktree", "list", "--porcelain"],
+			bareRepoPath,
+		);
+		if (listResult.exitCode !== 0) {
+			throw new Error(`git worktree list failed: ${listResult.stderr}`);
+		}
+
+		const expectedPath = canonicalPath(worktreePath);
+		const registeredPaths = listResult.stdout
+			.split("\n")
+			.filter((line) => line.startsWith("worktree "))
+			.map((line) => canonicalPath(line.slice("worktree ".length).trim()));
+		if (!registeredPaths.includes(expectedPath)) {
+			throw new Error(`worktree not registered: ${worktreePath}`);
+		}
+
+		const inspectResult = await runGit(
+			["-C", worktreePath, "rev-parse", "--is-inside-work-tree"],
+		);
+		if (inspectResult.exitCode !== 0 || inspectResult.stdout !== "true") {
+			throw new Error(`worktree is not a valid git checkout: ${worktreePath}`);
+		}
 	}
 
 	async removeWorktree(

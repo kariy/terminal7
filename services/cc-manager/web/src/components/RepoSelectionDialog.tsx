@@ -254,7 +254,11 @@ export function RepoSelectionDialog({ onSelect, onCancel }: RepoSelectionDialogP
               <button
                 type="button"
                 onClick={() => setShowCloneInput(true)}
-                className="w-full text-left text-xs font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                className={`w-full rounded-md border px-3 py-2 text-left text-xs font-medium transition-colors cursor-pointer ${
+                  showCloneInput
+                    ? "border-transparent text-muted-foreground"
+                    : "border-transparent text-muted-foreground hover:border-input hover:bg-background/80 hover:text-foreground"
+                }`}
               >
                 Clone a new repository
               </button>

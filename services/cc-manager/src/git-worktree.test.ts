@@ -49,7 +49,32 @@ describe("session.create with repo_url", () => {
 			"https://github.com/dojoengine/katana.git",
 		]);
 		expect(git.worktreeCalls.length).toBe(1);
+		expect(git.verifyWorktreeCalls.length).toBe(1);
 		expect(git.worktreeCalls[0]!.projectsDir).toBe(ctx.config.projectsDir);
+	});
+
+	test("returns git_error when worktree verification fails", async () => {
+		await connect();
+		await ws.nextMessage(); // consume hello
+
+		const git = ctx.gitService!;
+		git.verifyWorktreeError = new Error("worktree verification failed");
+
+		ws.send({
+			type: "session.create",
+			request_id: "req-git-verify-fail",
+			prompt: "Hello",
+			repo_url: "https://github.com/dojoengine/katana.git",
+		});
+
+		const error = (await ws.nextMessage()) as Record<string, unknown>;
+		expect(error.type).toBe("error");
+		expect(error.code).toBe("git_error");
+		expect(error.request_id).toBe("req-git-verify-fail");
+		expect(String(error.message)).toContain(
+			"Git setup failed: worktree verification failed",
+		);
+		expect(ctx.claudeService.calls.length).toBe(0);
 	});
 
 	test("session.created uses worktree path as cwd", async () => {
@@ -433,6 +458,17 @@ describeGit("GitService integration", () => {
 		expect(result.branch).toBe("main");
 		// Path should be under worktrees/
 		expect(result.worktreePath).toBe(join(projectsDir, "worktrees", worktreeId));
+	});
+
+	test("verifyWorktree accepts a valid created worktree", async () => {
+		const projectsDir = join(tempDir, "projects");
+		const info = await gitService.ensureRepo(localRepoUrl, projectsDir);
+		const result = await gitService.createWorktree(info.bareRepoPath, {
+			worktreeId: "wt-verify-ok",
+			projectsDir,
+		});
+
+		await gitService.verifyWorktree(info.bareRepoPath, result.worktreePath);
 	});
 
 	test("createWorktree with specific branch", async () => {

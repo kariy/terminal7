@@ -1,0 +1,58 @@
+{
+	"type": "stream.message",
+	"request_id": "60f1330d-46c8-429c-adf2-3f9764f65986",
+	"session_id": "770b382b-e777-47a1-b688-f9a202d4bbb8",
+	"sdk_message": {
+		"type": "result",
+		"subtype": "success",
+		"is_error": false,
+		"duration_ms": 7897,
+		"duration_api_ms": 7514,
+		"num_turns": 2,
+		"result": "Here are all the files and directories in the current directory:\n\n**Files:**\n- `.gitignore` (571 bytes)\n- `bun.lock` (5.6 KB)\n- `CLAUDE.md` (3.5 KB)\n- `example-session.jsonl` (1.6 KB)\n- `index.ts` (1.3 KB)\n- `package.json` (1.1 KB)\n- `README.md` (2.5 KB)\n- `server.ts` (3.6 KB)\n- `test-session.ts` (4.6 KB)\n- `test-ws-client.ts` (3.4 KB)\n- `tsconfig.json` (679 bytes)\n\n**Directories:**\n- `.git/`\n- `docs/`\n- `ios/`\n- `node_modules/`\n- `public/`\n- `scripts/`\n- `services/`",
+		"stop_reason": null,
+		"session_id": "770b382b-e777-47a1-b688-f9a202d4bbb8",
+		"total_cost_usd": 0.0306445,
+		"usage": {
+			"input_tokens": 9,
+			"cache_creation_input_tokens": 732,
+			"cache_read_input_tokens": 34975,
+			"output_tokens": 306,
+			"server_tool_use": {
+				"web_search_requests": 0,
+				"web_fetch_requests": 0
+			},
+			"service_tier": "standard",
+			"cache_creation": {
+				"ephemeral_1h_input_tokens": 0,
+				"ephemeral_5m_input_tokens": 732
+			},
+			"inference_geo": "",
+			"iterations": []
+		},
+		"modelUsage": {
+			"claude-sonnet-4-5-20250929": {
+				"inputTokens": 9,
+				"outputTokens": 306,
+				"cacheReadInputTokens": 34975,
+				"cacheCreationInputTokens": 732,
+				"webSearchRequests": 0,
+				"costUSD": 0.0297575,
+				"contextWindow": 200000,
+				"maxOutputTokens": 64000
+			},
+			"claude-haiku-4-5-20251001": {
+				"inputTokens": 727,
+				"outputTokens": 32,
+				"cacheReadInputTokens": 0,
+				"cacheCreationInputTokens": 0,
+				"webSearchRequests": 0,
+				"costUSD": 0.000887,
+				"contextWindow": 200000,
+				"maxOutputTokens": 64000
+			}
+		},
+		"permission_denials": [],
+		"uuid": "03d86d1f-e3ec-436a-86c3-fa890e249250"
+	}
+}

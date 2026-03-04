@@ -80,6 +80,9 @@ bun run test:manager
 
 - `bun run dev:manager` - start production manager
 - `bun run dev:manager:public` - start manager on `0.0.0.0:8787`
+- `bun run dev:web` - start manager + Vite web UI dev server with live reload
+- `bun run dev:web-ui` - run only the Vite web UI dev server
+- `bun run build:web-ui` - build the web UI into `services/cc-manager/public`
 - `bun run dev:cli` - run legacy CLI experiment (`index.ts`)
 - `bun run dev:legacy-server` - run legacy WebSocket server (`server.ts`)
 - `bun run ios:build` - build `ClaudeChat` for physical iOS devices
