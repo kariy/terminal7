@@ -9,8 +9,35 @@ import type {
 import { copyText } from "@/lib/clipboard";
 import { TextBlock } from "./blocks/TextBlock";
 import { ToolCallBlock } from "./blocks/ToolCallBlock";
+import { ToolCallGroup } from "./blocks/ToolCallGroup";
 import { ThinkingBlock } from "./blocks/ThinkingBlock";
 import { TypingBarsLoader } from "./blocks/TypingBarsLoader";
+
+type Segment =
+  | { type: "block"; block: ContentBlockState; index: number }
+  | { type: "tool_group"; blocks: ContentBlockState[]; startIndex: number };
+
+function segmentBlocks(blocks: ContentBlockState[]): Segment[] {
+  const segments: Segment[] = [];
+  let i = 0;
+  while (i < blocks.length) {
+    if (blocks[i].type === "tool_use") {
+      const start = i;
+      while (i < blocks.length && blocks[i].type === "tool_use") {
+        i++;
+      }
+      if (i - start >= 2) {
+        segments.push({ type: "tool_group", blocks: blocks.slice(start, i), startIndex: start });
+      } else {
+        segments.push({ type: "block", block: blocks[start], index: start });
+      }
+    } else {
+      segments.push({ type: "block", block: blocks[i], index: i });
+      i++;
+    }
+  }
+  return segments;
+}
 
 interface MessageBubbleProps {
   role: "user" | "assistant";
@@ -100,14 +127,35 @@ export function MessageBubble({
           copyFailed={copyFailed}
           onClick={handleCopyRawJson}
         />
-        {visibleBlocks.map((block, i) => {
-          if (block.type === "text") {
+        {segmentBlocks(visibleBlocks).map((segment, si, segments) => {
+          const prevSeg = segments[si - 1];
+          const nextSeg = segments[si + 1];
+          const prevType = prevSeg
+            ? prevSeg.type === "block" ? prevSeg.block.type : "tool_use"
+            : undefined;
+          const nextType = nextSeg
+            ? nextSeg.type === "block" ? nextSeg.block.type : "tool_use"
+            : undefined;
+
+          if (segment.type === "tool_group") {
             return (
-              <TextBlock
-                key={i}
-                text={block.text}
+              <ToolCallGroup
+                key={`tg-${segment.startIndex}`}
+                blocks={segment.blocks}
+                toolResults={toolResults}
+                permissionRequests={permissionRequests}
+                onRespondPermission={onRespondPermission}
+                isStreaming={isStreaming}
+                extraTopSpace={prevType === "text"}
+                extraBottomSpace={nextType === "text"}
               />
             );
+          }
+
+          const { block, index } = segment;
+
+          if (block.type === "text") {
+            return <TextBlock key={index} text={block.text} />;
           }
 
           if (block.type === "tool_use") {
@@ -116,18 +164,16 @@ export function MessageBubble({
               permissionRequests,
               block.toolId,
             );
-            const prevBlock = visibleBlocks[i - 1];
-            const nextBlock = visibleBlocks[i + 1];
             return (
               <ToolCallBlock
-                key={i}
+                key={index}
                 block={block}
                 result={result}
                 permissionRequest={permissionRequest}
                 onRespondPermission={onRespondPermission}
                 isStreaming={isStreaming}
-                extraTopSpace={prevBlock?.type === "text"}
-                extraBottomSpace={nextBlock?.type === "text"}
+                extraTopSpace={prevType === "text"}
+                extraBottomSpace={nextType === "text"}
               />
             );
           }
@@ -135,7 +181,7 @@ export function MessageBubble({
           if (block.type === "thinking") {
             return (
               <ThinkingBlock
-                key={i}
+                key={index}
                 text={block.text}
                 isStreaming={isStreaming && !block.isComplete}
               />
