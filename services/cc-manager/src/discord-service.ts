@@ -292,20 +292,24 @@ export class DiscordService {
 			const emojisToAdd = q.options
 				.slice(0, NUMBER_EMOJIS.length)
 				.map((_, i) => NUMBER_EMOJIS[i]);
+
+			// Start collector before adding reactions to avoid race condition
+			const collectorPromise = questionMsg.awaitReactions({
+				filter: (reaction, user) => {
+					if (user.bot) return false;
+					const emoji = reaction.emoji.name;
+					return emoji != null && emojisToAdd.includes(emoji as typeof NUMBER_EMOJIS[number]);
+				},
+				max: 1,
+				time: REACTION_TIMEOUT_MS,
+			});
+
 			for (const emoji of emojisToAdd) {
 				await questionMsg.react(emoji).catch(() => {});
 			}
 
 			try {
-				const collected = await questionMsg.awaitReactions({
-					filter: (reaction, user) => {
-						if (user.bot) return false;
-						const emoji = reaction.emoji.name;
-						return emoji != null && emojisToAdd.includes(emoji as typeof NUMBER_EMOJIS[number]);
-					},
-					max: 1,
-					time: REACTION_TIMEOUT_MS,
-				});
+				const collected = await collectorPromise;
 
 				const firstReaction = collected.first();
 				if (!firstReaction) {
