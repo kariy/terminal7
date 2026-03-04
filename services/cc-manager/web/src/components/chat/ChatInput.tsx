@@ -212,6 +212,10 @@ export function ChatInput({
   }, [updateAutocomplete]);
 
   useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
