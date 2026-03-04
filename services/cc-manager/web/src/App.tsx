@@ -1043,6 +1043,28 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPopState);
   }, [loadSessionHistory, status]);
 
+  // ── Poll session history while viewing a session ──
+  useEffect(() => {
+    if (
+      state.view !== "chat" ||
+      !state.activeSessionId ||
+      state.activeRequestIds.size > 0
+    )
+      return;
+    const sid = state.activeSessionId;
+    const ecwd = state.activeEncodedCwd;
+    const id = setInterval(() => {
+      loadSessionHistory(sid, ecwd).catch(() => {});
+    }, 5000);
+    return () => clearInterval(id);
+  }, [
+    state.view,
+    state.activeSessionId,
+    state.activeEncodedCwd,
+    state.activeRequestIds.size,
+    loadSessionHistory,
+  ]);
+
   // ── Handlers ──
 
   const handleRefresh = useCallback(() => {
