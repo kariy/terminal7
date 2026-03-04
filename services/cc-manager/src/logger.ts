@@ -33,6 +33,9 @@ export const log = {
 	terminal(message: string) {
 		logScope("terminal", 93, message);
 	},
+	discord(message: string) {
+		logScope("discord", 95, message);
+	},
 	startup(message: string) {
 		logScope("startup", 96, message);
 	},

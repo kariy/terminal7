@@ -244,12 +244,12 @@ function ensureRecord(value: unknown): Record<string, unknown> {
 	return isRecord(value) ? value : {};
 }
 
-function isExitPlanModeTool(toolName: string): boolean {
+export function isExitPlanModeTool(toolName: string): boolean {
 	const normalized = normalizeToolName(toolName);
 	return normalized === "exitplanmode" || normalized.endsWith("exitplanmode");
 }
 
-function isAskUserQuestionTool(
+export function isAskUserQuestionTool(
 	toolName: string,
 	input: unknown,
 ): boolean {

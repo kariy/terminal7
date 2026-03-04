@@ -259,6 +259,32 @@ export class ManagerRepository {
 					.run(nowMs());
 			})();
 		}
+
+		// V6: Add discord_thread_sessions table
+		const hasV6 = this.db
+			.query("SELECT 1 FROM schema_migrations WHERE version = 6")
+			.get() as { "1": number } | null;
+		if (!hasV6) {
+			this.db.transaction(() => {
+				this.db.exec(`
+					CREATE TABLE IF NOT EXISTS discord_thread_sessions (
+						thread_id TEXT PRIMARY KEY,
+						channel_id TEXT NOT NULL,
+						guild_id TEXT NOT NULL,
+						session_id TEXT NOT NULL,
+						encoded_cwd TEXT NOT NULL,
+						cwd TEXT NOT NULL,
+						created_at INTEGER NOT NULL
+					);
+				`);
+
+				this.db
+					.query(
+						"INSERT INTO schema_migrations (version, applied_at) VALUES (6, ?)",
+					)
+					.run(nowMs());
+			})();
+		}
 	}
 
 	private getMetadataRow(
@@ -1019,6 +1045,53 @@ export class ManagerRepository {
 		if (session.sessionId < cursor.sessionId) return true;
 		if (session.sessionId > cursor.sessionId) return false;
 		return session.encodedCwd < cursor.encodedCwd;
+	}
+
+	// ── Discord thread→session methods ──────────────────────────────
+
+	getDiscordThreadSession(
+		threadId: string,
+	): { sessionId: string; encodedCwd: string; cwd: string } | null {
+		const row = this.db
+			.query(
+				"SELECT session_id, encoded_cwd, cwd FROM discord_thread_sessions WHERE thread_id = ?",
+			)
+			.get(threadId) as {
+			session_id: string;
+			encoded_cwd: string;
+			cwd: string;
+		} | null;
+		if (!row) return null;
+		return {
+			sessionId: row.session_id,
+			encodedCwd: row.encoded_cwd,
+			cwd: row.cwd,
+		};
+	}
+
+	insertDiscordThreadSession(params: {
+		threadId: string;
+		channelId: string;
+		guildId: string;
+		sessionId: string;
+		encodedCwd: string;
+		cwd: string;
+	}): void {
+		this.db
+			.query(
+				`INSERT OR REPLACE INTO discord_thread_sessions (
+					thread_id, channel_id, guild_id, session_id, encoded_cwd, cwd, created_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			)
+			.run(
+				params.threadId,
+				params.channelId,
+				params.guildId,
+				params.sessionId,
+				params.encodedCwd,
+				params.cwd,
+				nowMs(),
+			);
 	}
 
 	close(): void {

@@ -10,6 +10,10 @@ export interface ManagerConfig {
 	maxHistoryMessages: number;
 	defaultCwd: string;
 	projectsDir: string;
+	discord?: {
+		token: string;
+		defaultCwd: string;
+	};
 }
 
 function parseIntegerEnv(name: string, fallback: number): number {
@@ -51,6 +55,18 @@ export function loadConfig(): ManagerConfig {
 		process.env.CC_MANAGER_PROJECTS_DIR ?? "~/.cc-manager/projects",
 	);
 
+	const defaultCwd = resolvePath(process.env.CC_MANAGER_DEFAULT_CWD ?? "/");
+
+	const discordToken = process.env.CC_MANAGER_DISCORD_TOKEN;
+	const discord = discordToken
+		? {
+				token: discordToken,
+				defaultCwd: resolvePath(
+					process.env.CC_MANAGER_DISCORD_DEFAULT_CWD ?? defaultCwd,
+				),
+			}
+		: undefined;
+
 	return {
 		host: process.env.CC_MANAGER_HOST ?? "127.0.0.1",
 		port: parseIntegerEnv("CC_MANAGER_PORT", 8787),
@@ -58,7 +74,8 @@ export function loadConfig(): ManagerConfig {
 		claudeProjectsDir,
 		allowedTools: parseAllowedTools(),
 		maxHistoryMessages: parseIntegerEnv("CC_MANAGER_MAX_HISTORY_MESSAGES", 5000),
-		defaultCwd: resolvePath(process.env.CC_MANAGER_DEFAULT_CWD ?? "/"),
+		defaultCwd,
 		projectsDir,
+		discord,
 	};
 }

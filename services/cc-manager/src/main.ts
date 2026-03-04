@@ -1,6 +1,7 @@
 import { ClaudeService } from "./claude-service";
 import type { ClaudeServiceLike } from "./claude-service";
 import { loadConfig, type ManagerConfig } from "./config";
+import { DiscordService } from "./discord-service";
 import { FileIndexService, type FileIndexServiceLike } from "./file-index-service";
 import { ClaudeJsonlIndexer } from "./jsonl-indexer";
 import { GitService } from "./git-service";
@@ -436,6 +437,18 @@ if (import.meta.main) {
 		fileIndexService,
 	});
 
+	let discordService: DiscordService | undefined;
+	if (config.discord) {
+		discordService = new DiscordService({
+			config: config.discord,
+			globalConfig: config,
+			repository,
+			claudeService,
+		});
+		await discordService.start();
+		log.startup("Discord bot connected");
+	}
+
 	const indexInterval = setInterval(() => {
 		const stats = indexer.refreshIndex();
 		if (stats.indexed > 0 || stats.parseErrors > 0) {
@@ -448,6 +461,7 @@ if (import.meta.main) {
 	for (const signal of ["SIGINT", "SIGTERM"]) {
 		process.on(signal, () => {
 			clearInterval(indexInterval);
+			discordService?.stop();
 			handle.stop();
 			process.exit(0);
 		});
