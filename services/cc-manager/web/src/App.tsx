@@ -1133,6 +1133,7 @@ export default function App() {
   const handleFileSearch = useCallback(
     (query: string | null) => {
       if (query === null) {
+        if (fileSearchQueryRef.current === null) return;
         fileSearchQueryRef.current = null;
         setFileSuggestions([]);
         setFileSearchIndexing(false);
