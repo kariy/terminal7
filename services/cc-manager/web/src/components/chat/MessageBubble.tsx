@@ -8,7 +8,6 @@ import type {
 } from "@/types/chat";
 import { copyText } from "@/lib/clipboard";
 import { TextBlock } from "./blocks/TextBlock";
-import { ToolCallBlock } from "./blocks/ToolCallBlock";
 import { ToolCallGroup } from "./blocks/ToolCallGroup";
 import { ThinkingBlock } from "./blocks/ThinkingBlock";
 import { TypingBarsLoader } from "./blocks/TypingBarsLoader";
@@ -26,11 +25,7 @@ function segmentBlocks(blocks: ContentBlockState[]): Segment[] {
       while (i < blocks.length && blocks[i].type === "tool_use") {
         i++;
       }
-      if (i - start >= 2) {
-        segments.push({ type: "tool_group", blocks: blocks.slice(start, i), startIndex: start });
-      } else {
-        segments.push({ type: "block", block: blocks[start], index: start });
-      }
+      segments.push({ type: "tool_group", blocks: blocks.slice(start, i), startIndex: start });
     } else {
       segments.push({ type: "block", block: blocks[i], index: i });
       i++;
@@ -156,26 +151,6 @@ export function MessageBubble({
 
           if (block.type === "text") {
             return <TextBlock key={index} text={block.text} />;
-          }
-
-          if (block.type === "tool_use") {
-            const result = block.toolId ? toolResults.get(block.toolId) : undefined;
-            const permissionRequest = findPermissionRequestForTool(
-              permissionRequests,
-              block.toolId,
-            );
-            return (
-              <ToolCallBlock
-                key={index}
-                block={block}
-                result={result}
-                permissionRequest={permissionRequest}
-                onRespondPermission={onRespondPermission}
-                isStreaming={isStreaming}
-                extraTopSpace={prevType === "text"}
-                extraBottomSpace={nextType === "text"}
-              />
-            );
           }
 
           if (block.type === "thinking") {

@@ -74,7 +74,7 @@ export function ToolCallGroup({
           <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
         )}
         <span className="font-medium shrink-0">
-          {blocks.length} tool calls
+          {blocks.length} tool {blocks.length === 1 ? "call" : "calls"}
         </span>
         <span className="text-muted-foreground truncate">
           &mdash; {toolNameList}
