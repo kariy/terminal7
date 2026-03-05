@@ -10,15 +10,47 @@
 		A1000001 /* ClaudeChatApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001; };
 		A1000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000002; };
 		A1000003 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000003; };
-		A1000004 /* Message.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000004; };
+		A1000010 /* ContentBlockState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000010; };
+		A1000011 /* ChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000011; };
+		A1000012 /* PermissionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000012; };
+		A1000013 /* SDKMessageTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000013; };
+		A1000014 /* SessionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000014; };
+		A1000020 /* SessionsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000020; };
+		A1000021 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000021; };
+		A1000022 /* MessageBubbleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000022; };
+		A1000023 /* TextBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000023; };
+		A1000024 /* ToolCallBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000024; };
+		A1000025 /* ToolInputView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000025; };
+		A1000026 /* ThinkingBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000026; };
+		A1000027 /* ToolCallGroupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000027; };
+		A1000028 /* AskUserQuestionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000028; };
+		A1000029 /* ExitPlanModeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000029; };
+		A100002A /* PermissionModeSelectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200002A; };
+		A100002B /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = A200002B; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		A2000001 /* ClaudeChatApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeChatApp.swift; sourceTree = "<group>"; };
 		A2000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A2000003 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
-		A2000004 /* Message.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Message.swift; sourceTree = "<group>"; };
-		A2000010 /* ClaudeChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2000010 /* ContentBlockState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentBlockState.swift; sourceTree = "<group>"; };
+		A2000011 /* ChatMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatMessage.swift; sourceTree = "<group>"; };
+		A2000012 /* PermissionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionModels.swift; sourceTree = "<group>"; };
+		A2000013 /* SDKMessageTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SDKMessageTypes.swift; sourceTree = "<group>"; };
+		A2000014 /* SessionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionModels.swift; sourceTree = "<group>"; };
+		A2000020 /* SessionsListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsListView.swift; sourceTree = "<group>"; };
+		A2000021 /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		A2000022 /* MessageBubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessageBubbleView.swift; sourceTree = "<group>"; };
+		A2000023 /* TextBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextBlockView.swift; sourceTree = "<group>"; };
+		A2000024 /* ToolCallBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallBlockView.swift; sourceTree = "<group>"; };
+		A2000025 /* ToolInputView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolInputView.swift; sourceTree = "<group>"; };
+		A2000026 /* ThinkingBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThinkingBlockView.swift; sourceTree = "<group>"; };
+		A2000027 /* ToolCallGroupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolCallGroupView.swift; sourceTree = "<group>"; };
+		A2000028 /* AskUserQuestionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskUserQuestionView.swift; sourceTree = "<group>"; };
+		A2000029 /* ExitPlanModeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitPlanModeView.swift; sourceTree = "<group>"; };
+		A200002A /* PermissionModeSelectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionModeSelectorView.swift; sourceTree = "<group>"; };
+		A200002F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A2000F10 /* ClaudeChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -26,6 +58,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A100002B /* MarkdownUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -46,7 +79,9 @@
 				A2000001 /* ClaudeChatApp.swift */,
 				A2000002 /* ContentView.swift */,
 				A2000003 /* ChatViewModel.swift */,
-				A2000004 /* Message.swift */,
+				A200002F /* Info.plist */,
+				A4000004 /* Models */,
+				A4000005 /* Views */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -54,9 +89,47 @@
 		A4000003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A2000010 /* ClaudeChat.app */,
+				A2000F10 /* ClaudeChat.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A4000004 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A2000010 /* ContentBlockState.swift */,
+				A2000011 /* ChatMessage.swift */,
+				A2000012 /* PermissionModels.swift */,
+				A2000013 /* SDKMessageTypes.swift */,
+				A2000014 /* SessionModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		A4000005 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A2000020 /* SessionsListView.swift */,
+				A2000021 /* ChatView.swift */,
+				A2000022 /* MessageBubbleView.swift */,
+				A200002A /* PermissionModeSelectorView.swift */,
+				A4000006 /* Blocks */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		A4000006 /* Blocks */ = {
+			isa = PBXGroup;
+			children = (
+				A2000023 /* TextBlockView.swift */,
+				A2000024 /* ToolCallBlockView.swift */,
+				A2000025 /* ToolInputView.swift */,
+				A2000026 /* ThinkingBlockView.swift */,
+				A2000027 /* ToolCallGroupView.swift */,
+				A2000028 /* AskUserQuestionView.swift */,
+				A2000029 /* ExitPlanModeView.swift */,
+			);
+			path = Blocks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -74,8 +147,11 @@
 			dependencies = (
 			);
 			name = ClaudeChat;
+			packageProductDependencies = (
+				A200002B /* MarkdownUI */,
+			);
 			productName = ClaudeChat;
-			productReference = A2000010 /* ClaudeChat.app */;
+			productReference = A2000F10 /* ClaudeChat.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -97,6 +173,9 @@
 				Base,
 			);
 			mainGroup = A4000001;
+			packageReferences = (
+				A200002C /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
+			);
 			productRefGroup = A4000003 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -114,7 +193,22 @@
 				A1000001 /* ClaudeChatApp.swift in Sources */,
 				A1000002 /* ContentView.swift in Sources */,
 				A1000003 /* ChatViewModel.swift in Sources */,
-				A1000004 /* Message.swift in Sources */,
+				A1000010 /* ContentBlockState.swift in Sources */,
+				A1000011 /* ChatMessage.swift in Sources */,
+				A1000012 /* PermissionModels.swift in Sources */,
+				A1000013 /* SDKMessageTypes.swift in Sources */,
+				A1000014 /* SessionModels.swift in Sources */,
+				A1000020 /* SessionsListView.swift in Sources */,
+				A1000021 /* ChatView.swift in Sources */,
+				A1000022 /* MessageBubbleView.swift in Sources */,
+				A1000023 /* TextBlockView.swift in Sources */,
+				A1000024 /* ToolCallBlockView.swift in Sources */,
+				A1000025 /* ToolInputView.swift in Sources */,
+				A1000026 /* ThinkingBlockView.swift in Sources */,
+				A1000027 /* ToolCallGroupView.swift in Sources */,
+				A1000028 /* AskUserQuestionView.swift in Sources */,
+				A1000029 /* ExitPlanModeView.swift in Sources */,
+				A100002A /* PermissionModeSelectorView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -239,6 +333,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A200002C /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/gonzalezreal/swift-markdown-ui";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.4.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A200002B /* MarkdownUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A200002C /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
+			productName = MarkdownUI;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 	};
 	rootObject = A8000001 /* Project object */;

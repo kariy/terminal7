@@ -1,22 +1,9 @@
 import Foundation
 import Observation
 
-struct ClaudeSessionSummary: Identifiable, Equatable {
-    let sessionId: String
-    let encodedCwd: String
-    let cwd: String
-    let title: String
-    let lastActivityAt: Int
-    let messageCount: Int
-
-    var id: String {
-        "\(sessionId)|\(encodedCwd)"
-    }
-}
-
 @Observable
 final class ChatViewModel {
-    var messages: [Message] = []
+    var messages: [ChatMessage] = []
     var currentInput: String = ""
     var isStreaming: Bool { !activeRequestIds.isEmpty }
     private var activeRequestIds: Set<String> = []
@@ -26,6 +13,11 @@ final class ChatViewModel {
     var isSessionViewActive: Bool = false
     var sessions: [ClaudeSessionSummary] = []
     var isLoadingSessions: Bool = false
+    var permissionRequests: [ToolPermissionRequestState] = []
+    var sessionPermissionModes: [String: SessionPermissionMode] = [:]
+    var draftPermissionMode: SessionPermissionMode = .default
+    var activeSessionMeta: SessionMeta?
+    var sessionsNextCursor: String?
 
     var serverHost: String = ""
     private let managerPort: Int = 8787
@@ -38,6 +30,9 @@ final class ChatViewModel {
     private var activeSessionId: String?
     private var activeEncodedCwd: String?
 
+    // Maps requestId -> base block index for stream block positioning
+    private var streamMessageBaseByRequestId: [String: Int] = [:]
+
     private let defaults = UserDefaults.standard
 
     private enum DefaultsKey {
@@ -47,6 +42,38 @@ final class ChatViewModel {
     init() {
         loadPersistedConfig()
     }
+
+    // MARK: - Stream Block Index Helpers
+
+    private func isSdkStreamContentBlock(_ block: ContentBlockState) -> Bool {
+        block.type == .text || block.type == .toolUse || block.type == .thinking
+    }
+
+    private func findStreamBlockInsertIndex(_ blocks: [ContentBlockState], streamIndex: Int) -> Int {
+        var seenStreamBlocks = 0
+        for i in 0..<blocks.count {
+            if !isSdkStreamContentBlock(blocks[i]) { continue }
+            if seenStreamBlocks == streamIndex { return i }
+            seenStreamBlocks += 1
+        }
+        return blocks.count
+    }
+
+    private func findStreamBlockArrayIndex(_ blocks: [ContentBlockState], streamIndex: Int) -> Int {
+        var seenStreamBlocks = 0
+        for i in 0..<blocks.count {
+            if !isSdkStreamContentBlock(blocks[i]) { continue }
+            if seenStreamBlocks == streamIndex { return i }
+            seenStreamBlocks += 1
+        }
+        return -1
+    }
+
+    private func countStreamBlocks(_ blocks: [ContentBlockState]) -> Int {
+        blocks.filter { isSdkStreamContentBlock($0) }.count
+    }
+
+    // MARK: - Connection
 
     func autoConnectIfPossible() {
         if isConnected || isConnecting { return }
@@ -68,6 +95,10 @@ final class ChatViewModel {
         isLoadingSessions = false
         messages.removeAll()
         currentInput = ""
+        permissionRequests.removeAll()
+        streamMessageBaseByRequestId.removeAll()
+        activeSessionMeta = nil
+        sessionsNextCursor = nil
 
         persistConfig()
         isConnecting = true
@@ -93,6 +124,9 @@ final class ChatViewModel {
         webSocketTask = nil
         webSocketSession?.invalidateAndCancel()
         webSocketSession = nil
+        permissionRequests.removeAll()
+        streamMessageBaseByRequestId.removeAll()
+        activeSessionMeta = nil
     }
 
     func startNewClaudeCodeSession() {
@@ -104,6 +138,9 @@ final class ChatViewModel {
         messages.removeAll()
         currentInput = ""
         activeRequestIds.removeAll()
+        permissionRequests.removeAll()
+        streamMessageBaseByRequestId.removeAll()
+        activeSessionMeta = nil
         isSessionViewActive = true
     }
 
@@ -116,7 +153,17 @@ final class ChatViewModel {
         messages.removeAll()
         currentInput = ""
         activeRequestIds.removeAll()
+        permissionRequests.removeAll()
+        streamMessageBaseByRequestId.removeAll()
+        activeSessionMeta = nil
         isSessionViewActive = true
+
+        // Restore permission mode if we have one
+        if let mode = sessionPermissionModes[session.sessionId] {
+            draftPermissionMode = mode
+        } else {
+            draftPermissionMode = .default
+        }
 
         historyLoadTask = Task { [weak self] in
             guard let self else { return }
@@ -131,9 +178,7 @@ final class ChatViewModel {
                         self.activeEncodedCwd == session.encodedCwd,
                         !self.isStreaming,
                         self.messages.isEmpty
-                    else {
-                        return
-                    }
+                    else { return }
                     self.messages = history
                 }
             } catch {
@@ -142,13 +187,11 @@ final class ChatViewModel {
                         self.activeSessionId == session.sessionId,
                         self.activeEncodedCwd == session.encodedCwd,
                         self.messages.isEmpty
-                    else {
-                        return
-                    }
+                    else { return }
                     self.messages = [
-                        Message(
+                        ChatMessage(
                             role: "assistant",
-                            text: "Failed to load history: \(error.localizedDescription)"
+                            contentBlocks: [ContentBlockState(type: .text, text: "Failed to load history: \(error.localizedDescription)")]
                         ),
                     ]
                 }
@@ -163,6 +206,8 @@ final class ChatViewModel {
         isSessionViewActive = false
         currentInput = ""
         activeRequestIds.removeAll()
+        permissionRequests.removeAll()
+        streamMessageBaseByRequestId.removeAll()
         refreshSessions(forceRefresh: false)
     }
 
@@ -170,39 +215,56 @@ final class ChatViewModel {
         guard isConnected else { return }
         Task { [weak self] in
             guard let self else { return }
-            await MainActor.run {
-                self.isLoadingSessions = true
-            }
+            await MainActor.run { self.isLoadingSessions = true }
 
             do {
-                let fetched = try await self.fetchSessions(forceRefresh: forceRefresh)
+                let (fetched, cursor) = try await self.fetchSessions(forceRefresh: forceRefresh)
                 await MainActor.run {
                     self.sessions = fetched
+                    self.sessionsNextCursor = cursor
                     self.isLoadingSessions = false
                 }
             } catch {
-                await MainActor.run {
-                    self.isLoadingSessions = false
-                }
+                await MainActor.run { self.isLoadingSessions = false }
             }
         }
     }
+
+    func loadMoreSessions() {
+        guard isConnected, let cursor = sessionsNextCursor else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let (fetched, nextCursor) = try await self.fetchSessions(forceRefresh: false, cursor: cursor)
+                await MainActor.run {
+                    self.sessions.append(contentsOf: fetched)
+                    self.sessionsNextCursor = nextCursor
+                }
+            } catch {}
+        }
+    }
+
+    // MARK: - Send Message
 
     func send() {
         let text = currentInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         guard isSessionViewActive else { return }
         guard webSocketTask != nil, isConnected else {
-            messages.append(Message(role: "assistant", text: "Not connected to manager."))
+            messages.append(ChatMessage(
+                role: "assistant",
+                contentBlocks: [ContentBlockState(type: .text, text: "Not connected to manager.")]
+            ))
             return
         }
         historyLoadTask?.cancel()
         historyLoadTask = nil
 
         let requestId = UUID().uuidString
-        var payload: [String: String] = [
+        var payload: [String: Any] = [
             "request_id": requestId,
             "prompt": text,
+            "permission_mode": currentPermissionMode.rawValue,
         ]
 
         if let sessionId = activeSessionId, let encodedCwd = activeEncodedCwd {
@@ -213,59 +275,97 @@ final class ChatViewModel {
             payload["type"] = "session.create"
         }
 
-        messages.append(Message(role: "user", text: text))
-        messages.append(Message(role: "assistant", text: "", requestId: requestId))
+        messages.append(ChatMessage(
+            role: "user",
+            contentBlocks: [ContentBlockState(type: .text, text: text)]
+        ))
+        messages.append(ChatMessage(
+            role: "assistant",
+            requestId: requestId,
+            contentBlocks: [],
+            streamStartTime: Date()
+        ))
         currentInput = ""
         activeRequestIds.insert(requestId)
 
         sendWebSocket(payload)
     }
 
-    private func fetchSessions(forceRefresh: Bool) async throws -> [ClaudeSessionSummary] {
-        var queryItems: [URLQueryItem] = []
-        if forceRefresh {
-            queryItems.append(URLQueryItem(name: "refresh", value: "1"))
+    func stopStreaming() {
+        guard let sessionId = activeSessionId, let encodedCwd = activeEncodedCwd else { return }
+        sendWebSocket([
+            "type": "session.stop",
+            "session_id": sessionId,
+            "encoded_cwd": encodedCwd,
+        ])
+    }
+
+    // MARK: - Permissions
+
+    func respondToPermission(
+        permissionRequestId: String,
+        decision: String,
+        message: String? = nil,
+        mode: PermissionMode? = nil,
+        updatedInput: [String: Any]? = nil
+    ) {
+        // Update local state
+        if let idx = permissionRequests.firstIndex(where: { $0.permissionRequestId == permissionRequestId }) {
+            permissionRequests[idx].status = decision == "allow" ? .approved : .rejected
+            permissionRequests[idx].message = message
+            permissionRequests[idx].mode = mode
         }
+
+        // Send WS message
+        var payload: [String: Any] = [
+            "type": "permission.respond",
+            "request_id": permissionRequestId,
+            "decision": decision,
+        ]
+        if let message { payload["message"] = message }
+        if let mode { payload["mode"] = mode.rawValue }
+        if let updatedInput { payload["updated_input"] = updatedInput }
+
+        sendWebSocket(payload)
+    }
+
+    var currentPermissionMode: SessionPermissionMode {
+        if let sessionId = activeSessionId, let mode = sessionPermissionModes[sessionId] {
+            return mode
+        }
+        return draftPermissionMode
+    }
+
+    // MARK: - Fetch Sessions
+
+    private func fetchSessions(forceRefresh: Bool, cursor: String? = nil) async throws -> ([ClaudeSessionSummary], String?) {
+        var queryItems: [URLQueryItem] = []
+        if forceRefresh { queryItems.append(URLQueryItem(name: "refresh", value: "1")) }
+        if let cursor { queryItems.append(URLQueryItem(name: "cursor", value: cursor)) }
 
         var request = URLRequest(url: try managerHTTPURL(path: "/v1/sessions", queryItems: queryItems))
         request.httpMethod = "GET"
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw NSError(
-                domain: "manager",
-                code: -11,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid session list response"]
-            )
-        }
-
-        guard (200...299).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let serverError = String(data: data, encoding: .utf8) ?? "Unknown sessions error"
-            throw NSError(
-                domain: "manager",
-                code: http.statusCode,
-                userInfo: [NSLocalizedDescriptionKey: serverError]
-            )
+            throw NSError(domain: "manager", code: -11, userInfo: [NSLocalizedDescriptionKey: serverError])
         }
 
         guard
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
             let rawSessions = json["sessions"] as? [[String: Any]]
         else {
-            throw NSError(
-                domain: "manager",
-                code: -12,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid sessions payload"]
-            )
+            throw NSError(domain: "manager", code: -12, userInfo: [NSLocalizedDescriptionKey: "Invalid sessions payload"])
         }
 
-        return rawSessions.compactMap { item in
+        let nextCursor = json["next_cursor"] as? String
+
+        let sessions = rawSessions.compactMap { item -> ClaudeSessionSummary? in
             guard
                 let sessionId = item["session_id"] as? String,
                 let encodedCwd = item["encoded_cwd"] as? String
-            else {
-                return nil
-            }
+            else { return nil }
 
             return ClaudeSessionSummary(
                 sessionId: sessionId,
@@ -273,61 +373,148 @@ final class ChatViewModel {
                 cwd: item["cwd"] as? String ?? "",
                 title: item["title"] as? String ?? "Untitled session",
                 lastActivityAt: item["last_activity_at"] as? Int ?? item["updated_at"] as? Int ?? 0,
-                messageCount: item["message_count"] as? Int ?? 0
+                messageCount: item["message_count"] as? Int ?? 0,
+                totalCostUsd: item["total_cost_usd"] as? Double
             )
         }
+
+        return (sessions, nextCursor)
     }
 
-    private func fetchSessionHistory(sessionId: String, encodedCwd: String) async throws -> [Message] {
+    // MARK: - Fetch History
+
+    private func fetchSessionHistory(sessionId: String, encodedCwd: String) async throws -> [ChatMessage] {
         let escapedSessionId = sessionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sessionId
         let queryItems = [URLQueryItem(name: "encoded_cwd", value: encodedCwd)]
         var request = URLRequest(
-            url: try managerHTTPURL(
-                path: "/v1/sessions/\(escapedSessionId)/history",
-                queryItems: queryItems
-            )
+            url: try managerHTTPURL(path: "/v1/sessions/\(escapedSessionId)/history", queryItems: queryItems)
         )
         request.httpMethod = "GET"
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw NSError(
-                domain: "manager",
-                code: -14,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid history response"]
-            )
-        }
-
-        guard (200...299).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let serverError = String(data: data, encoding: .utf8) ?? "Unknown history error"
-            throw NSError(
-                domain: "manager",
-                code: http.statusCode,
-                userInfo: [NSLocalizedDescriptionKey: serverError]
-            )
+            throw NSError(domain: "manager", code: -14, userInfo: [NSLocalizedDescriptionKey: serverError])
         }
 
         guard
             let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
             let rawMessages = json["messages"] as? [[String: Any]]
         else {
-            throw NSError(
-                domain: "manager",
-                code: -15,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid history payload"]
-            )
+            throw NSError(domain: "manager", code: -15, userInfo: [NSLocalizedDescriptionKey: "Invalid history payload"])
         }
 
-        return rawMessages.compactMap { item in
-            guard
-                let role = item["role"] as? String,
-                let text = item["text"] as? String
-            else {
-                return nil
+        return mapHistoryToChat(rawMessages)
+    }
+
+    // MARK: - History Mapping
+
+    private func mapHistoryToChat(_ rawMessages: [[String: Any]]) -> [ChatMessage] {
+        var result: [ChatMessage] = []
+
+        for item in rawMessages {
+            guard let role = item["role"] as? String else { continue }
+
+            var blocks: [ContentBlockState] = []
+
+            if let rawBlocks = item["content_blocks"] as? [[String: Any]] {
+                blocks = rawBlocks.compactMap { mapContentBlock($0) }
             }
-            return Message(role: role, text: text)
+
+            // Fallback to plain text
+            if blocks.isEmpty, let text = item["text"] as? String, !text.isEmpty {
+                blocks = [ContentBlockState(type: .text, text: text)]
+            }
+
+            guard !blocks.isEmpty else { continue }
+
+            // Merge user messages that only have tool_result blocks into the preceding assistant
+            if role == "user" {
+                let hasOnlyToolResults = blocks.allSatisfy { $0.type == .toolResult }
+                if hasOnlyToolResults, let lastIdx = result.indices.last, result[lastIdx].role == "assistant" {
+                    result[lastIdx].contentBlocks.append(contentsOf: blocks)
+                    continue
+                }
+                // Skip user messages with no displayable content
+                let hasDisplayable = blocks.contains { $0.type == .text && !$0.text.isEmpty }
+                if !hasDisplayable {
+                    // Still merge tool_results into preceding assistant
+                    let toolResults = blocks.filter { $0.type == .toolResult }
+                    if !toolResults.isEmpty, let lastIdx = result.indices.last, result[lastIdx].role == "assistant" {
+                        result[lastIdx].contentBlocks.append(contentsOf: toolResults)
+                    }
+                    continue
+                }
+            }
+
+            result.append(ChatMessage(role: role, contentBlocks: blocks))
+        }
+
+        return result
+    }
+
+    private func mapContentBlock(_ raw: [String: Any]) -> ContentBlockState? {
+        guard let typeStr = raw["type"] as? String else { return nil }
+
+        switch typeStr {
+        case "text":
+            let text = raw["text"] as? String ?? ""
+            return ContentBlockState(type: .text, text: text)
+
+        case "tool_use":
+            let name = raw["name"] as? String ?? ""
+            let toolId = raw["id"] as? String ?? ""
+            var inputStr = ""
+            if let input = raw["input"] {
+                if let data = try? JSONSerialization.data(withJSONObject: input),
+                   let str = String(data: data, encoding: .utf8) {
+                    inputStr = str
+                }
+            }
+            return ContentBlockState(
+                type: .toolUse,
+                toolName: name,
+                toolId: toolId,
+                toolInput: inputStr,
+                isComplete: true
+            )
+
+        case "thinking":
+            let text = raw["thinking"] as? String ?? ""
+            return ContentBlockState(type: .thinking, text: text, isComplete: true)
+
+        case "tool_result":
+            let toolUseId = raw["tool_use_id"] as? String ?? ""
+            let text = extractToolResultText(raw)
+            let isError = raw["is_error"] as? Bool ?? false
+            return ContentBlockState(
+                type: .toolResult,
+                text: text,
+                toolResultForId: toolUseId,
+                isError: isError
+            )
+
+        default:
+            return nil
         }
     }
+
+    private func extractToolResultText(_ raw: [String: Any]) -> String {
+        if let content = raw["content"] as? String {
+            return content
+        }
+        if let content = raw["content"] as? [[String: Any]] {
+            return content.compactMap { item -> String? in
+                if item["type"] as? String == "text" {
+                    return item["text"] as? String
+                }
+                return nil
+            }.joined(separator: "\n")
+        }
+        return ""
+    }
+
+    // MARK: - WebSocket
 
     private func openWebSocket() {
         disconnect()
@@ -351,7 +538,7 @@ final class ChatViewModel {
         refreshSessions(forceRefresh: true)
     }
 
-    private func sendWebSocket(_ payload: [String: String]) {
+    private func sendWebSocket(_ payload: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8) else {
             return
@@ -361,7 +548,10 @@ final class ChatViewModel {
             guard let self else { return }
             if let error {
                 DispatchQueue.main.async {
-                    self.messages.append(Message(role: "assistant", text: "Send error: \(error.localizedDescription)"))
+                    self.messages.append(ChatMessage(
+                        role: "assistant",
+                        contentBlocks: [ContentBlockState(type: .text, text: "Send error: \(error.localizedDescription)")]
+                    ))
                     self.activeRequestIds.removeAll()
                 }
             }
@@ -376,14 +566,10 @@ final class ChatViewModel {
             case .success(let message):
                 switch message {
                 case .string(let text):
-                    DispatchQueue.main.async {
-                        self.handleServerMessage(text)
-                    }
+                    DispatchQueue.main.async { self.handleServerMessage(text) }
                 case .data(let data):
                     if let text = String(data: data, encoding: .utf8) {
-                        DispatchQueue.main.async {
-                            self.handleServerMessage(text)
-                        }
+                        DispatchQueue.main.async { self.handleServerMessage(text) }
                     }
                 @unknown default:
                     break
@@ -395,9 +581,11 @@ final class ChatViewModel {
                     self.isConnected = false
                     self.activeRequestIds.removeAll()
                     self.connectionStatus = "Disconnected"
-                    self.messages.append(Message(role: "assistant", text: "Socket error: \(error.localizedDescription)"))
+                    self.messages.append(ChatMessage(
+                        role: "assistant",
+                        contentBlocks: [ContentBlockState(type: .text, text: "Socket error: \(error.localizedDescription)")]
+                    ))
                 }
-
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     self.connect()
                 }
@@ -413,6 +601,8 @@ final class ChatViewModel {
             self.sendWebSocket(["type": "session.refresh_index"])
         }
     }
+
+    // MARK: - Message Handling
 
     private func handleServerMessage(_ text: String) {
         guard let data = text.data(using: .utf8),
@@ -430,6 +620,12 @@ final class ChatViewModel {
             historyLoadTask = nil
             activeSessionId = json["session_id"] as? String
             activeEncodedCwd = json["encoded_cwd"] as? String
+            if let sessionId = activeSessionId {
+                sessionPermissionModes[sessionId] = draftPermissionMode
+            }
+            if let meta = json["meta"] as? [String: Any] {
+                updateSessionMeta(meta)
+            }
 
         case "session.state":
             if let sessionId = json["session_id"] as? String {
@@ -438,51 +634,353 @@ final class ChatViewModel {
             if let encodedCwd = json["encoded_cwd"] as? String {
                 activeEncodedCwd = encodedCwd
             }
-            if
-                let status = json["status"] as? String,
-                status == "index_refreshed",
-                !isSessionViewActive
-            {
+            if let meta = json["meta"] as? [String: Any] {
+                updateSessionMeta(meta)
+            }
+            if let status = json["status"] as? String, status == "index_refreshed", !isSessionViewActive {
                 refreshSessions(forceRefresh: false)
             }
 
-        case "stream.delta":
-            if let deltaText = json["text"] as? String {
-                let reqId = json["request_id"] as? String
-                if let reqId,
-                   let idx = messages.lastIndex(where: { $0.requestId == reqId }) {
-                    messages[idx].text += deltaText
-                } else if let last = messages.last, last.role == "assistant", isStreaming {
-                    messages[messages.count - 1].text += deltaText
-                } else {
-                    messages.append(Message(role: "assistant", text: deltaText, requestId: reqId))
-                }
-            }
+        case "stream.message":
+            handleStreamMessage(json)
 
         case "stream.done":
-            if let reqId = json["request_id"] as? String {
-                activeRequestIds.remove(reqId)
-                if let idx = messages.lastIndex(where: { $0.requestId == reqId }) {
-                    messages[idx].requestId = nil
-                }
-            } else {
-                activeRequestIds.removeAll()
-            }
+            handleStreamDone(json)
+
+        case "permission.request":
+            handlePermissionRequest(json)
 
         case "error":
-            let message = json["message"] as? String ?? "Unknown server error"
-            messages.append(Message(role: "assistant", text: "Error: \(message)"))
-            if let reqId = json["request_id"] as? String {
-                activeRequestIds.remove(reqId)
-                if let idx = messages.lastIndex(where: { $0.requestId == reqId }) {
-                    messages[idx].requestId = nil
-                }
-            } else {
-                activeRequestIds.removeAll()
+            handleError(json)
+
+        default:
+            break
+        }
+    }
+
+    // MARK: - stream.message Handling
+
+    private func handleStreamMessage(_ json: [String: Any]) {
+        guard let requestId = json["request_id"] as? String,
+              let sdkMessage = json["sdk_message"] as? [String: Any],
+              let sdkType = sdkMessage["type"] as? String else {
+            return
+        }
+
+        guard let msgIdx = messages.lastIndex(where: { $0.requestId == requestId }) else {
+            return
+        }
+
+        switch sdkType {
+        case "stream_event":
+            handleStreamEvent(sdkMessage, messageIndex: msgIdx, requestId: requestId)
+
+        case "tool_progress":
+            handleToolProgress(sdkMessage, messageIndex: msgIdx)
+
+        case "tool_use_summary":
+            handleToolUseSummary(sdkMessage, messageIndex: msgIdx)
+
+        case "result":
+            handleResult(sdkMessage, messageIndex: msgIdx, json: json)
+
+        case "system":
+            if let model = (sdkMessage["model_info"] as? [String: Any])?["model"] as? String {
+                if activeSessionMeta == nil { activeSessionMeta = SessionMeta() }
+                activeSessionMeta?.model = model
             }
 
         default:
             break
+        }
+    }
+
+    private func handleStreamEvent(_ sdkMessage: [String: Any], messageIndex: Int, requestId: String) {
+        guard let event = sdkMessage["event"] as? [String: Any],
+              let eventTypeStr = event["type"] as? String else {
+            return
+        }
+
+        switch eventTypeStr {
+        case "message_start":
+            let base = countStreamBlocks(messages[messageIndex].contentBlocks)
+            streamMessageBaseByRequestId[requestId] = base
+
+        case "message_stop":
+            streamMessageBaseByRequestId.removeValue(forKey: requestId)
+
+        case "content_block_start":
+            guard let eventIndex = event["index"] as? Int,
+                  let contentBlock = event["content_block"] as? [String: Any],
+                  let blockType = contentBlock["type"] as? String else {
+                return
+            }
+
+            let streamIndex = (streamMessageBaseByRequestId[requestId] ?? 0) + eventIndex
+
+            switch blockType {
+            case "text":
+                let text = contentBlock["text"] as? String ?? ""
+                let block = ContentBlockState(type: .text, text: text)
+                let insertAt = findStreamBlockInsertIndex(messages[messageIndex].contentBlocks, streamIndex: streamIndex)
+                messages[messageIndex].contentBlocks.insert(block, at: insertAt)
+
+            case "tool_use":
+                let name = contentBlock["name"] as? String ?? ""
+                let toolId = contentBlock["id"] as? String ?? ""
+                // Deduplicate by toolId
+                if messages[messageIndex].contentBlocks.contains(where: { $0.toolId == toolId }) {
+                    return
+                }
+                var inputStr = ""
+                if let input = contentBlock["input"] {
+                    if let data = try? JSONSerialization.data(withJSONObject: input),
+                       let str = String(data: data, encoding: .utf8) {
+                        inputStr = str
+                    }
+                }
+                let block = ContentBlockState(type: .toolUse, toolName: name, toolId: toolId, toolInput: inputStr)
+                let insertAt = findStreamBlockInsertIndex(messages[messageIndex].contentBlocks, streamIndex: streamIndex)
+                messages[messageIndex].contentBlocks.insert(block, at: insertAt)
+
+            case "thinking":
+                let text = contentBlock["thinking"] as? String ?? ""
+                let block = ContentBlockState(type: .thinking, text: text)
+                let insertAt = findStreamBlockInsertIndex(messages[messageIndex].contentBlocks, streamIndex: streamIndex)
+                messages[messageIndex].contentBlocks.insert(block, at: insertAt)
+
+            default:
+                break
+            }
+
+        case "content_block_delta":
+            guard let eventIndex = event["index"] as? Int,
+                  let delta = event["delta"] as? [String: Any],
+                  let deltaType = delta["type"] as? String else {
+                return
+            }
+
+            let streamIndex = (streamMessageBaseByRequestId[requestId] ?? 0) + eventIndex
+            let arrayIndex = findStreamBlockArrayIndex(messages[messageIndex].contentBlocks, streamIndex: streamIndex)
+            guard arrayIndex >= 0 else { return }
+
+            switch deltaType {
+            case "text_delta":
+                if let text = delta["text"] as? String {
+                    messages[messageIndex].contentBlocks[arrayIndex].text += text
+                }
+
+            case "input_json_delta":
+                if let json = delta["partial_json"] as? String {
+                    messages[messageIndex].contentBlocks[arrayIndex].toolInput =
+                        (messages[messageIndex].contentBlocks[arrayIndex].toolInput ?? "") + json
+                }
+
+            case "thinking_delta":
+                if let text = delta["thinking"] as? String {
+                    messages[messageIndex].contentBlocks[arrayIndex].text += text
+                }
+
+            default:
+                break
+            }
+
+        case "content_block_stop":
+            guard let eventIndex = event["index"] as? Int else { return }
+
+            let streamIndex = (streamMessageBaseByRequestId[requestId] ?? 0) + eventIndex
+            let arrayIndex = findStreamBlockArrayIndex(messages[messageIndex].contentBlocks, streamIndex: streamIndex)
+            guard arrayIndex >= 0 else { return }
+
+            messages[messageIndex].contentBlocks[arrayIndex].isComplete = true
+
+        default:
+            break
+        }
+    }
+
+    private func handleToolProgress(_ sdkMessage: [String: Any], messageIndex: Int) {
+        guard let toolName = sdkMessage["tool_name"] as? String,
+              let elapsed = sdkMessage["elapsed_time_seconds"] as? Double else {
+            return
+        }
+
+        // Find the last tool_use block matching this tool name
+        for i in stride(from: messages[messageIndex].contentBlocks.count - 1, through: 0, by: -1) {
+            if messages[messageIndex].contentBlocks[i].type == .toolUse,
+               messages[messageIndex].contentBlocks[i].toolName == toolName {
+                messages[messageIndex].contentBlocks[i].elapsedSeconds = elapsed
+                break
+            }
+        }
+    }
+
+    private func handleToolUseSummary(_ sdkMessage: [String: Any], messageIndex: Int) {
+        let summary = sdkMessage["summary"] as? String ?? ""
+
+        // Find the last tool_use block
+        var lastToolId: String?
+        for i in stride(from: messages[messageIndex].contentBlocks.count - 1, through: 0, by: -1) {
+            if messages[messageIndex].contentBlocks[i].type == .toolUse {
+                lastToolId = messages[messageIndex].contentBlocks[i].toolId
+                break
+            }
+        }
+
+        let resultBlock = ContentBlockState(
+            type: .toolResult,
+            text: summary,
+            toolResultForId: lastToolId
+        )
+        messages[messageIndex].contentBlocks.append(resultBlock)
+    }
+
+    private func handleResult(_ sdkMessage: [String: Any], messageIndex: Int, json: [String: Any]) {
+        let cost = sdkMessage["total_cost_usd"] as? Double
+        let duration = sdkMessage["duration_seconds"] as? Double
+            ?? sdkMessage["duration_ms"].flatMap { ($0 as? Double).map { $0 / 1000.0 } }
+
+        if cost != nil || duration != nil {
+            let resultBlock = ContentBlockState(
+                type: .result,
+                totalCostUsd: cost,
+                durationSeconds: duration
+            )
+            messages[messageIndex].contentBlocks.append(resultBlock)
+
+            if let cost {
+                if activeSessionMeta == nil { activeSessionMeta = SessionMeta() }
+                activeSessionMeta?.totalCostUsd = cost
+            }
+        }
+    }
+
+    // MARK: - stream.done
+
+    private func handleStreamDone(_ json: [String: Any]) {
+        if let reqId = json["request_id"] as? String {
+            activeRequestIds.remove(reqId)
+            streamMessageBaseByRequestId.removeValue(forKey: reqId)
+            if let idx = messages.lastIndex(where: { $0.requestId == reqId }) {
+                messages[idx].requestId = nil
+            }
+        } else {
+            activeRequestIds.removeAll()
+            streamMessageBaseByRequestId.removeAll()
+        }
+
+        // Update cost from done message
+        if let meta = json["meta"] as? [String: Any] {
+            updateSessionMeta(meta)
+        }
+
+        // Refresh sessions list to update costs
+        if !isSessionViewActive {
+            refreshSessions(forceRefresh: false)
+        }
+    }
+
+    // MARK: - permission.request
+
+    private func handlePermissionRequest(_ json: [String: Any]) {
+        guard let permReqId = json["request_id"] as? String,
+              let promptReqId = json["prompt_request_id"] as? String,
+              let toolName = json["tool_name"] as? String,
+              let toolUseId = json["tool_use_id"] as? String else {
+            return
+        }
+
+        let toolInput = json["tool_input"] as? [String: Any] ?? [:]
+
+        // Upsert into permission requests
+        if let idx = permissionRequests.firstIndex(where: { $0.permissionRequestId == permReqId }) {
+            permissionRequests[idx] = ToolPermissionRequestState(
+                permissionRequestId: permReqId,
+                promptRequestId: promptReqId,
+                toolName: toolName,
+                toolUseId: toolUseId,
+                toolInput: toolInput
+            )
+        } else {
+            permissionRequests.append(ToolPermissionRequestState(
+                permissionRequestId: permReqId,
+                promptRequestId: promptReqId,
+                toolName: toolName,
+                toolUseId: toolUseId,
+                toolInput: toolInput
+            ))
+        }
+
+        // Inject tool_use block if not already present
+        var inputStr = ""
+        if let data = try? JSONSerialization.data(withJSONObject: toolInput),
+           let str = String(data: data, encoding: .utf8) {
+            inputStr = str
+        }
+
+        let toolBlock = ContentBlockState(
+            type: .toolUse,
+            toolName: toolName,
+            toolId: toolUseId,
+            toolInput: inputStr,
+            isComplete: true
+        )
+
+        // Find message matching the promptRequestId
+        if let msgIdx = messages.lastIndex(where: { $0.requestId == promptReqId }) {
+            // Check if tool_use block already exists
+            if !messages[msgIdx].contentBlocks.contains(where: { $0.toolId == toolUseId }) {
+                messages[msgIdx].contentBlocks.append(toolBlock)
+            }
+        } else {
+            // Create a new assistant message for the permission
+            messages.append(ChatMessage(
+                role: "assistant",
+                requestId: promptReqId,
+                contentBlocks: [toolBlock]
+            ))
+            if !activeRequestIds.contains(promptReqId) {
+                activeRequestIds.insert(promptReqId)
+            }
+        }
+    }
+
+    // MARK: - error
+
+    private func handleError(_ json: [String: Any]) {
+        let message = json["message"] as? String ?? "Unknown server error"
+        let reqId = json["request_id"] as? String
+
+        if let reqId {
+            activeRequestIds.remove(reqId)
+            streamMessageBaseByRequestId.removeValue(forKey: reqId)
+            if let idx = messages.lastIndex(where: { $0.requestId == reqId }) {
+                messages[idx].contentBlocks.append(ContentBlockState(type: .text, text: "Error: \(message)"))
+                messages[idx].requestId = nil
+            } else {
+                messages.append(ChatMessage(
+                    role: "assistant",
+                    contentBlocks: [ContentBlockState(type: .text, text: "Error: \(message)")]
+                ))
+            }
+        } else {
+            activeRequestIds.removeAll()
+            messages.append(ChatMessage(
+                role: "assistant",
+                contentBlocks: [ContentBlockState(type: .text, text: "Error: \(message)")]
+            ))
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func updateSessionMeta(_ meta: [String: Any]) {
+        if activeSessionMeta == nil { activeSessionMeta = SessionMeta() }
+        if let cost = meta["total_cost_usd"] as? Double {
+            activeSessionMeta?.totalCostUsd = cost
+        }
+        if let model = meta["model"] as? String {
+            activeSessionMeta?.model = model
         }
     }
 
@@ -496,19 +994,11 @@ final class ChatViewModel {
 
     private func managerHTTPURL(path: String, queryItems: [URLQueryItem] = []) throws -> URL {
         var components = URLComponents()
-
         components.scheme = "http"
         components.host = serverHost
         components.port = managerPort
-
-        if path.hasPrefix("/") {
-            components.path = path
-        } else {
-            components.path = "/\(path)"
-        }
-        if !queryItems.isEmpty {
-            components.queryItems = queryItems
-        }
+        components.path = path.hasPrefix("/") ? path : "/\(path)"
+        if !queryItems.isEmpty { components.queryItems = queryItems }
 
         guard let url = components.url else {
             throw NSError(domain: "manager", code: -5, userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP URL"])
@@ -518,16 +1008,10 @@ final class ChatViewModel {
 
     private func managerWebSocketURL(path: String) throws -> URL {
         var components = URLComponents()
-
         components.scheme = "ws"
         components.host = serverHost
         components.port = managerPort
-
-        if path.hasPrefix("/") {
-            components.path = path
-        } else {
-            components.path = "/\(path)"
-        }
+        components.path = path.hasPrefix("/") ? path : "/\(path)"
 
         guard let url = components.url else {
             throw NSError(domain: "manager", code: -7, userInfo: [NSLocalizedDescriptionKey: "Invalid WebSocket URL"])
