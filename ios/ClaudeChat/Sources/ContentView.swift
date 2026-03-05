@@ -16,6 +16,19 @@ struct ContentView: View {
             }
         }
         .background(Color(white: 0.08))
+        .overlay(alignment: .top) {
+            if let toast = viewModel.toastMessage {
+                ToastView(
+                    message: toast,
+                    isError: viewModel.toastIsError,
+                    onDismiss: { viewModel.dismissToast() }
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .padding(.top, 8)
+                .zIndex(100)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: viewModel.toastMessage)
     }
 
     private var header: some View {
@@ -67,20 +80,77 @@ struct ContentView: View {
 
     private var connectionForm: some View {
         VStack(spacing: 10) {
-            TextField("Server host", text: $viewModel.serverHost)
+            TextField("Server endpoint (host or host:port)", text: $viewModel.serverEndpoint)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.URL)
+                .padding(10)
+                .background(Color(white: 0.16))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            Text("e.g. 192.168.1.10:8787 or myserver.local")
+                .font(.caption)
+                .foregroundStyle(.gray)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            SecureField("Auth token (optional)", text: $viewModel.authToken)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .padding(10)
                 .background(Color(white: 0.16))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
-
-            Text("Port 8787 (fixed)")
-                .font(.caption)
-                .foregroundStyle(.gray)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding()
         .foregroundStyle(.white)
         .background(Color(white: 0.10))
+    }
+}
+
+private struct ToastView: View {
+    let message: String
+    var isError: Bool = true
+    var onDismiss: () -> Void
+
+    @State private var autoDismissTask: Task<Void, Never>?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isError ? "exclamationmark.triangle.fill" : "info.circle.fill")
+                .font(.system(size: 16))
+                .foregroundStyle(isError ? .yellow : .blue)
+
+            Text(message)
+                .font(.subheadline)
+                .foregroundStyle(.white)
+                .lineLimit(3)
+
+            Spacer(minLength: 4)
+
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Color(white: 0.5))
+                    .padding(4)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(white: 0.18))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.4), radius: 8, y: 4)
+        .padding(.horizontal, 16)
+        .onAppear {
+            autoDismissTask?.cancel()
+            autoDismissTask = Task {
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled else { return }
+                await MainActor.run { onDismiss() }
+            }
+        }
+        .onDisappear {
+            autoDismissTask?.cancel()
+        }
     }
 }

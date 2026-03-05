@@ -19,8 +19,11 @@ final class ChatViewModel {
     var activeSessionMeta: SessionMeta?
     var sessionsNextCursor: String?
 
-    var serverHost: String = ""
-    private let managerPort: Int = 8787
+    var toastMessage: String?
+    var toastIsError: Bool = true
+
+    var serverEndpoint: String = ""
+    var authToken: String = ""
 
     private var webSocketSession: URLSession?
     private var webSocketTask: URLSessionWebSocketTask?
@@ -36,7 +39,35 @@ final class ChatViewModel {
     private let defaults = UserDefaults.standard
 
     private enum DefaultsKey {
-        static let host = "manager.host"
+        static let endpoint = "manager.endpoint"
+        static let authToken = "manager.authToken"
+    }
+
+    /// Parses serverEndpoint into (host, port). Accepts formats:
+    /// - "host" (defaults to port 8787)
+    /// - "host:port"
+    /// - "http://host:port"
+    /// - "http://host:port/path" (path ignored)
+    private var parsedEndpoint: (host: String, port: Int)? {
+        let trimmed = serverEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // If it looks like a URL, parse it
+        if trimmed.contains("://") {
+            if let url = URL(string: trimmed), let host = url.host, !host.isEmpty {
+                return (host, url.port ?? 8787)
+            }
+            return nil
+        }
+
+        // host:port or just host
+        let parts = trimmed.split(separator: ":", maxSplits: 1)
+        let host = String(parts[0])
+        guard !host.isEmpty else { return nil }
+        if parts.count == 2, let port = Int(parts[1]) {
+            return (host, port)
+        }
+        return (host, 8787)
     }
 
     init() {
@@ -77,14 +108,14 @@ final class ChatViewModel {
 
     func autoConnectIfPossible() {
         if isConnected || isConnecting { return }
-        guard !serverHost.isEmpty else { return }
+        guard parsedEndpoint != nil else { return }
         connect()
     }
 
     func connect() {
         guard !isConnecting else { return }
-        guard !serverHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            connectionStatus = "Missing host"
+        guard parsedEndpoint != nil else {
+            connectionStatus = "Invalid endpoint"
             return
         }
 
@@ -345,6 +376,7 @@ final class ChatViewModel {
 
         var request = URLRequest(url: try managerHTTPURL(path: "/v1/sessions", queryItems: queryItems))
         request.httpMethod = "GET"
+        applyAuth(to: &request)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -390,6 +422,7 @@ final class ChatViewModel {
             url: try managerHTTPURL(path: "/v1/sessions/\(escapedSessionId)/history", queryItems: queryItems)
         )
         request.httpMethod = "GET"
+        applyAuth(to: &request)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -517,25 +550,30 @@ final class ChatViewModel {
     // MARK: - WebSocket
 
     private func openWebSocket() {
-        disconnect()
+        // Clean up existing connection without full disconnect
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        webSocketTask = nil
+        webSocketSession?.invalidateAndCancel()
+        webSocketSession = nil
 
         guard let wsURL = try? managerWebSocketURL(path: "/v1/ws") else {
             connectionStatus = "Invalid WebSocket URL"
             return
         }
 
-        webSocketSession?.invalidateAndCancel()
         let session = URLSession(configuration: .default)
         webSocketSession = session
-        webSocketTask = session.webSocketTask(with: wsURL)
+        var wsRequest = URLRequest(url: wsURL)
+        applyAuth(to: &wsRequest)
+        webSocketTask = session.webSocketTask(with: wsRequest)
         webSocketTask?.resume()
 
-        isConnected = true
-        connectionStatus = "Connected"
+        // Don't set isConnected until we receive the "hello" message
+        connectionStatus = "Connecting..."
 
         receiveMessage()
-        startRefreshTimer()
-        refreshSessions(forceRefresh: true)
     }
 
     private func sendWebSocket(_ payload: [String: Any]) {
@@ -548,10 +586,7 @@ final class ChatViewModel {
             guard let self else { return }
             if let error {
                 DispatchQueue.main.async {
-                    self.messages.append(ChatMessage(
-                        role: "assistant",
-                        contentBlocks: [ContentBlockState(type: .text, text: "Send error: \(error.localizedDescription)")]
-                    ))
+                    self.showToast("Send error: \(error.localizedDescription)")
                     self.activeRequestIds.removeAll()
                 }
             }
@@ -578,16 +613,24 @@ final class ChatViewModel {
 
             case .failure(let error):
                 DispatchQueue.main.async {
+                    let wasConnected = self.isConnected
                     self.isConnected = false
                     self.activeRequestIds.removeAll()
                     self.connectionStatus = "Disconnected"
-                    self.messages.append(ChatMessage(
-                        role: "assistant",
-                        contentBlocks: [ContentBlockState(type: .text, text: "Socket error: \(error.localizedDescription)")]
-                    ))
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    self.connect()
+                    self.refreshTimer?.invalidate()
+                    self.refreshTimer = nil
+
+                    if wasConnected {
+                        self.showToast("Connection lost. Reconnecting...")
+                        self.connectionStatus = "Reconnecting..."
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            guard !self.isConnected, !self.isConnecting else { return }
+                            self.openWebSocket()
+                        }
+                    } else {
+                        self.showToast("Connection failed: \(error.localizedDescription)")
+                        self.connectionStatus = "Connection failed"
+                    }
                 }
             }
         }
@@ -613,7 +656,10 @@ final class ChatViewModel {
 
         switch type {
         case "hello":
-            break
+            isConnected = true
+            connectionStatus = "Connected"
+            startRefreshTimer()
+            refreshSessions(forceRefresh: true)
 
         case "session.created":
             historyLoadTask?.cancel()
@@ -958,18 +1004,23 @@ final class ChatViewModel {
                 messages[idx].contentBlocks.append(ContentBlockState(type: .text, text: "Error: \(message)"))
                 messages[idx].requestId = nil
             } else {
-                messages.append(ChatMessage(
-                    role: "assistant",
-                    contentBlocks: [ContentBlockState(type: .text, text: "Error: \(message)")]
-                ))
+                showToast(message)
             }
         } else {
             activeRequestIds.removeAll()
-            messages.append(ChatMessage(
-                role: "assistant",
-                contentBlocks: [ContentBlockState(type: .text, text: "Error: \(message)")]
-            ))
+            showToast(message)
         }
+    }
+
+    // MARK: - Toast
+
+    func showToast(_ message: String, isError: Bool = true) {
+        toastMessage = message
+        toastIsError = isError
+    }
+
+    func dismissToast() {
+        toastMessage = nil
     }
 
     // MARK: - Helpers
@@ -984,19 +1035,31 @@ final class ChatViewModel {
         }
     }
 
+    private func applyAuth(to request: inout URLRequest) {
+        let token = authToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+    }
+
     private func loadPersistedConfig() {
-        serverHost = defaults.string(forKey: DefaultsKey.host) ?? serverHost
+        serverEndpoint = defaults.string(forKey: DefaultsKey.endpoint) ?? serverEndpoint
+        authToken = defaults.string(forKey: DefaultsKey.authToken) ?? authToken
     }
 
     private func persistConfig() {
-        defaults.set(serverHost, forKey: DefaultsKey.host)
+        defaults.set(serverEndpoint, forKey: DefaultsKey.endpoint)
+        defaults.set(authToken, forKey: DefaultsKey.authToken)
     }
 
     private func managerHTTPURL(path: String, queryItems: [URLQueryItem] = []) throws -> URL {
+        guard let ep = parsedEndpoint else {
+            throw NSError(domain: "manager", code: -5, userInfo: [NSLocalizedDescriptionKey: "Invalid endpoint"])
+        }
         var components = URLComponents()
         components.scheme = "http"
-        components.host = serverHost
-        components.port = managerPort
+        components.host = ep.host
+        components.port = ep.port
         components.path = path.hasPrefix("/") ? path : "/\(path)"
         if !queryItems.isEmpty { components.queryItems = queryItems }
 
@@ -1007,10 +1070,13 @@ final class ChatViewModel {
     }
 
     private func managerWebSocketURL(path: String) throws -> URL {
+        guard let ep = parsedEndpoint else {
+            throw NSError(domain: "manager", code: -7, userInfo: [NSLocalizedDescriptionKey: "Invalid endpoint"])
+        }
         var components = URLComponents()
         components.scheme = "ws"
-        components.host = serverHost
-        components.port = managerPort
+        components.host = ep.host
+        components.port = ep.port
         components.path = path.hasPrefix("/") ? path : "/\(path)"
 
         guard let url = components.url else {

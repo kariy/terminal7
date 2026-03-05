@@ -25,7 +25,7 @@ struct SessionsListView: View {
                     }
                 }
 
-                Text("Connected to \(viewModel.serverHost)")
+                Text("Connected to \(viewModel.serverEndpoint)")
                     .font(.caption)
                     .foregroundStyle(.gray)
 
