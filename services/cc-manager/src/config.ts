@@ -10,6 +10,12 @@ export interface ManagerConfig {
 	maxHistoryMessages: number;
 	defaultCwd: string;
 	projectsDir: string;
+	authToken?: string;
+	googleClientId?: string;
+	cookieSecure: "auto" | "always" | "never";
+	rateLimitWindowMs: number;
+	rateLimitMaxAttempts: number;
+	trustProxy: boolean;
 	discord?: {
 		token: string;
 		defaultCwd: string;
@@ -67,6 +73,16 @@ export function loadConfig(): ManagerConfig {
 			}
 		: undefined;
 
+	const authToken = process.env.CC_MANAGER_AUTH_TOKEN || undefined;
+	const googleClientId = process.env.CC_MANAGER_GOOGLE_CLIENT_ID || undefined;
+
+	const cookieSecureRaw = process.env.CC_MANAGER_COOKIE_SECURE ?? "auto";
+	const cookieSecure = (["auto", "always", "never"].includes(cookieSecureRaw) ? cookieSecureRaw : "auto") as "auto" | "always" | "never";
+
+	const rateLimitWindowMs = parseIntegerEnv("CC_MANAGER_RATE_LIMIT_WINDOW_SECS", 900) * 1000;
+	const rateLimitMaxAttempts = parseIntegerEnv("CC_MANAGER_RATE_LIMIT_MAX_ATTEMPTS", 10);
+	const trustProxy = process.env.CC_MANAGER_TRUST_PROXY === "true";
+
 	return {
 		host: process.env.CC_MANAGER_HOST ?? "127.0.0.1",
 		port: parseIntegerEnv("CC_MANAGER_PORT", 8787),
@@ -76,6 +92,12 @@ export function loadConfig(): ManagerConfig {
 		maxHistoryMessages: parseIntegerEnv("CC_MANAGER_MAX_HISTORY_MESSAGES", 5000),
 		defaultCwd,
 		projectsDir,
+		authToken,
+		googleClientId,
+		cookieSecure,
+		rateLimitWindowMs,
+		rateLimitMaxAttempts,
+		trustProxy,
 		discord,
 	};
 }

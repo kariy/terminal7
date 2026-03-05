@@ -11,7 +11,9 @@ import type { SDKMessage } from "@/types/sdk-messages";
 import type { SessionListItem, HistoryMessage, SshConnectionItem } from "@/types/api";
 import { fetchSessions, fetchHistory, fetchSshConnections, createSshConnection, deleteSshConnection } from "@/lib/api";
 import { getSshDestination, setSshDestination, getSshPassword, setSshPassword } from "@/lib/settings";
+import { getAuthToken, fetchAuthMe } from "@/lib/auth";
 import { Header, type HeaderTab } from "@/components/layout/Header";
+import { AuthDialog } from "@/components/AuthDialog";
 import { SshDestinationDialog } from "@/components/SshDestinationDialog";
 import { RepoSelectionDialog, type RepoSelection } from "@/components/RepoSelectionDialog";
 import { ConnectingView } from "@/components/views/ConnectingView";
@@ -740,6 +742,7 @@ export default function App() {
   const refreshTimerRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const hasConnectedRef = useRef(false);
   const terminal = useTerminal();
+  const [showAuthPrompt, setShowAuthPrompt] = useState(false);
   const [showSshDialog, setShowSshDialog] = useState(false);
   const [showRepoDialog, setShowRepoDialog] = useState(false);
   const [pendingRepoSelection, setPendingRepoSelection] = useState<RepoSelection | null>(null);
@@ -832,6 +835,29 @@ export default function App() {
   const handleWsMessage = useCallback((msg: WsServerMessage) => {
     switch (msg.type) {
       case "hello":
+        // If auth is required, check if we actually have valid credentials
+        // (bearer token or session cookie). The WS might fail to upgrade if
+        // auth is invalid, in which case onclose triggers reconnect.
+        // But if no users exist yet (needs_setup), WS connects without auth.
+        if (msg.requires_auth && !getAuthToken()) {
+          // No bearer token — verify cookie session exists
+          fetchAuthMe().then((me) => {
+            if (!me) {
+              setShowAuthPrompt(true);
+            }
+          }).catch(() => {
+            setShowAuthPrompt(true);
+          });
+        } else if (!msg.requires_auth) {
+          // Auth not required — check if this is a fresh server needing setup
+          import("@/lib/auth").then(({ fetchAuthStatus }) =>
+            fetchAuthStatus().then((s) => {
+              if (s.needs_setup) {
+                setShowAuthPrompt(true);
+              }
+            }).catch(() => {}),
+          );
+        }
         // Connection established — load initial data
         if (!hasConnectedRef.current) {
           hasConnectedRef.current = true;
@@ -982,7 +1008,7 @@ export default function App() {
     }
   }, [loadSessionHistory, loadSessionsFirstPage]);
 
-  const { status, send, disconnect } = useWebSocket({
+  const { status, send, disconnect, reconnect } = useWebSocket({
     onMessage: handleWsMessage,
   });
 
@@ -999,14 +1025,24 @@ export default function App() {
     return () => clearInterval(refreshTimerRef.current);
   }, [status, send]);
 
-  // On disconnect, show connecting view
+  // On disconnect, show connecting view; if never connected, check if auth is needed
   useEffect(() => {
     if (status === "disconnected" || status === "connecting") {
       if (stateRef.current.view !== "connecting") {
         dispatch({ type: "SET_VIEW", view: "connecting" });
       }
+      // If we've never connected, the WS might be failing due to auth
+      if (status === "disconnected" && !hasConnectedRef.current && !showAuthPrompt) {
+        import("@/lib/auth").then(({ fetchAuthStatus }) =>
+          fetchAuthStatus().then((s) => {
+            if (s.auth_enabled || s.needs_setup) {
+              setShowAuthPrompt(true);
+            }
+          }).catch(() => {}),
+        );
+      }
     }
-  }, [status]);
+  }, [status, showAuthPrompt]);
 
   useEffect(() => {
     fileSearchQueryRef.current = null;
@@ -1288,6 +1324,11 @@ export default function App() {
     setPendingTerminalSession(null);
   }, []);
 
+  const handleAuthenticated = useCallback(() => {
+    setShowAuthPrompt(false);
+    reconnect();
+  }, [reconnect]);
+
   const handleOpenSettings = useCallback(() => {
     setShowSshDialog(true);
   }, []);
@@ -1458,6 +1499,9 @@ export default function App() {
           containerRef={terminal.containerRef}
           onClose={handleCloseTerminal}
         />
+      )}
+      {showAuthPrompt && (
+        <AuthDialog onAuthenticated={handleAuthenticated} />
       )}
       {showSshDialog && (
         <SshDestinationDialog

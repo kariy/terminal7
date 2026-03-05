@@ -6,6 +6,19 @@ import { FileIndexService, type FileIndexServiceLike } from "./file-index-servic
 import { ClaudeJsonlIndexer } from "./jsonl-indexer";
 import { GitService } from "./git-service";
 import type { GitServiceLike } from "./git-service";
+import {
+	validateAuth,
+	unauthorizedResponse,
+	handleLogin,
+	handleLogout,
+	handleAuthMe,
+	handleAuthStatus,
+	handleRegister,
+	handleGoogleLogin,
+	isAuthEnabled,
+	type AuthDeps,
+} from "./auth";
+import { LoginRateLimiter } from "./rate-limiter";
 import { jsonResponse, notFound } from "./http-utils";
 import { ManagerRepository } from "./repository";
 import type { SessionHistoryResult, WsConnectionState, WsSessionState, WsTerminalState } from "./types";
@@ -58,6 +71,14 @@ export function createServer(deps: ServerDeps): ServerHandle {
 		fileIndexService = new FileIndexService(),
 	} = deps;
 
+	const rateLimiter = new LoginRateLimiter(config.rateLimitWindowMs, config.rateLimitMaxAttempts);
+
+	const authDeps: AuthDeps = {
+		repository,
+		config,
+		rateLimiter,
+	};
+
 	const app = new App({
 		repository,
 		claudeService,
@@ -98,6 +119,39 @@ export function createServer(deps: ServerDeps): ServerHandle {
 		async fetch(req, serverInstance) {
 			const url = new URL(req.url);
 			const { pathname } = url;
+
+			// Bind serverInstance to authDeps for IP extraction
+			const reqAuthDeps = { ...authDeps, serverInstance };
+
+			// Auth routes (exempt from auth gate)
+			if (pathname === "/v1/auth/login" && req.method === "POST") {
+				return handleLogin(req, reqAuthDeps);
+			}
+			if (pathname === "/v1/auth/logout" && req.method === "POST") {
+				return handleLogout(req, reqAuthDeps);
+			}
+			if (pathname === "/v1/auth/status" && req.method === "GET") {
+				return handleAuthStatus(req, reqAuthDeps);
+			}
+			if (pathname === "/v1/auth/register" && req.method === "POST") {
+				return handleRegister(req, reqAuthDeps);
+			}
+			if (pathname === "/v1/auth/google" && req.method === "POST") {
+				return handleGoogleLogin(req, reqAuthDeps);
+			}
+
+			// Auth gate: require valid auth for /v1/* routes
+			if (
+				pathname.startsWith("/v1/") &&
+				!validateAuth(req, config, repository)
+			) {
+				return unauthorizedResponse();
+			}
+
+			// Auth info (after auth gate so it can return user info)
+			if (pathname === "/v1/auth/me" && req.method === "GET") {
+				return handleAuthMe(req, reqAuthDeps);
+			}
 
 			if (pathname === "/v1/ws") {
 				const upgraded = serverInstance.upgrade(req, {
@@ -393,6 +447,7 @@ export function createServer(deps: ServerDeps): ServerHandle {
 
 	function stop() {
 		server.stop(true);
+		rateLimiter.dispose();
 		fileIndexService.dispose();
 		repository.close();
 	}
@@ -408,6 +463,7 @@ if (import.meta.main) {
 
 	const config = loadConfig();
 	const repository = new ManagerRepository(config.dbPath);
+
 	const indexer = new ClaudeJsonlIndexer(
 		config.claudeProjectsDir,
 		repository,
@@ -456,6 +512,7 @@ if (import.meta.main) {
 				`indexed=${stats.indexed} skipped=${stats.skippedUnchanged} errors=${stats.parseErrors}`,
 			);
 		}
+		repository.deleteExpiredAuthSessions();
 	}, 15000);
 
 	for (const signal of ["SIGINT", "SIGTERM"]) {
@@ -473,4 +530,16 @@ if (import.meta.main) {
 	log.startup(`claude projects directory: ${config.claudeProjectsDir}`);
 	log.startup(`git projects directory: ${config.projectsDir}`);
 	log.startup(`sqlite database: ${config.dbPath}`);
+	const authEnabled = isAuthEnabled(config, repository);
+	if (config.authToken) {
+		log.startup("authentication: bearer token enabled");
+	}
+	const userCount = repository.listAuthUsers().length;
+	if (userCount > 0) {
+		log.startup(`authentication: ${userCount} user(s) configured`);
+	}
+	if (!authEnabled) {
+		log.startup("authentication: disabled (no token or users configured)");
+	}
+
 }

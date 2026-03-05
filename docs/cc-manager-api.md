@@ -6,6 +6,160 @@ All JSON responses use `Content-Type: application/json; charset=utf-8`.
 
 ---
 
+## Authentication
+
+Authentication is enabled when either `CC_MANAGER_AUTH_TOKEN` is set **or** users exist in the database. When neither is configured, all endpoints are open.
+
+Two auth methods are supported and can be used simultaneously:
+
+### 1. Bearer Token (static)
+
+Set `CC_MANAGER_AUTH_TOKEN` env var. Clients send the token via header:
+
+```
+Authorization: Bearer <token>
+```
+
+Or via query parameter (for WebSocket connections from browsers):
+
+```
+ws://host:port/v1/ws?token=<token>
+```
+
+### 2. Username/Password (session-based)
+
+Create users with the CLI tool:
+
+```bash
+bun run services/cc-manager/src/manage-users.ts add <username> <password>
+bun run services/cc-manager/src/manage-users.ts list
+bun run services/cc-manager/src/manage-users.ts delete <username>
+bun run services/cc-manager/src/manage-users.ts passwd <username> <new-password>
+```
+
+Passwords must be at least 8 characters. This is enforced by the `manage-users` CLI tool.
+
+Clients authenticate via `POST /v1/auth/login`, which sets an `HttpOnly` session cookie (`cc_session`). Sessions expire after 7 days. The cookie is sent automatically with all subsequent requests including WebSocket upgrades.
+
+### Auth endpoints
+
+**`GET /v1/auth/status`** — Get current auth configuration state. Exempt from auth gate.
+
+```jsonc
+// Response 200
+{
+  "auth_enabled": true,    // true when users exist or bearer token is set
+  "needs_setup": false,    // true when no users AND no bearer token (first-time setup)
+  "google_enabled": false  // true when CC_MANAGER_GOOGLE_CLIENT_ID is set
+}
+```
+
+**`POST /v1/auth/register`** — Create a new user account. Exempt from auth gate.
+
+```jsonc
+// Request
+{ "username": "admin", "password": "secretpass" }
+
+// Response 200
+{ "user": { "username": "admin" }, "session": { "expires_at": 1706000000000 } }
+// Set-Cookie: cc_session=<id>; Path=/; HttpOnly; SameSite=Strict; Max-Age=604800
+```
+
+**Response `400`** — Invalid parameters:
+```json
+{ "error": { "code": "invalid_params", "message": "Password must be at least 8 characters" } }
+```
+
+**Response `409`** — Username already taken:
+```json
+{ "error": { "code": "username_taken", "message": "Username is already taken" } }
+```
+
+**Response `429`** — Too many attempts:
+```json
+{ "error": { "code": "rate_limited", "message": "Too many attempts. Try again later." } }
+```
+
+**`POST /v1/auth/google`** — Authenticate via Google ID token. Exempt from auth gate. Requires `CC_MANAGER_GOOGLE_CLIENT_ID` to be set.
+
+```jsonc
+// Request
+{ "id_token": "<google-id-token>" }
+
+// Response 200
+{ "user": { "username": "user@gmail.com" }, "session": { "expires_at": 1706000000000 } }
+// Set-Cookie: cc_session=<id>; Path=/; HttpOnly; SameSite=Strict; Max-Age=604800
+```
+
+The server verifies the token with Google's `tokeninfo` endpoint and validates that the `aud` claim matches `CC_MANAGER_GOOGLE_CLIENT_ID`. If the user doesn't exist, they are auto-created with the email as username.
+
+**Response `400`** — Google login not configured:
+```json
+{ "error": { "code": "google_not_configured", "message": "Google login is not configured on this server" } }
+```
+
+**Response `401`** — Invalid or mismatched token:
+```json
+{ "error": { "code": "invalid_google_token", "message": "Google token verification failed" } }
+```
+
+**`POST /v1/auth/login`** — Authenticate with username/password. Exempt from auth gate.
+
+```jsonc
+// Request
+{ "username": "admin", "password": "secret" }
+
+// Response 200
+{ "user": { "username": "admin" }, "session": { "expires_at": 1706000000000 } }
+// Set-Cookie: cc_session=<id>; Path=/; HttpOnly; SameSite=Strict; Max-Age=604800
+```
+
+**Response `401`** — Invalid credentials:
+```json
+{ "error": { "code": "invalid_credentials", "message": "Invalid username or password" } }
+```
+
+**Response `429`** — Too many failed login attempts:
+```json
+{ "error": { "code": "rate_limited", "message": "Too many login attempts. Try again later." } }
+```
+Includes a `Retry-After` header (seconds until the window resets).
+
+**`POST /v1/auth/logout`** — Invalidate the current session. Exempt from auth gate.
+
+```jsonc
+// Response 200
+{ "ok": true }
+// Set-Cookie: cc_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0
+```
+
+**`GET /v1/auth/me`** — Get current user info (requires auth).
+
+```jsonc
+// Response 200 (session auth)
+{ "user": { "username": "admin" }, "auth_method": "session", "session": { "expires_at": 1706000000000 } }
+
+// Response 200 (bearer token)
+{ "user": { "username": "token" }, "auth_method": "bearer_token" }
+```
+
+### Exempt routes
+
+`/health`, `/v1/auth/login`, `/v1/auth/logout`, `/v1/auth/status`, `/v1/auth/register`, `/v1/auth/google`, and static file paths (anything not under `/v1/`) do not require authentication.
+
+### Unauthorized response `401`
+
+```json
+{
+  "error": {
+    "code": "unauthorized",
+    "message": "Valid authentication required"
+  }
+}
+```
+
+---
+
 ## HTTP Endpoints
 
 ### `GET /health`
@@ -307,7 +461,7 @@ Sent immediately after the WebSocket connection opens.
 ```jsonc
 {
   "type": "hello",
-  "requires_auth": false,     // always false (auth not implemented)
+  "requires_auth": true,       // true when auth is enabled (token set or users exist)
   "server_time": 1705300000000 // epoch ms
 }
 ```
@@ -428,6 +582,10 @@ Sent for any error condition (validation failures, prompt errors, etc.).
 | `repo_not_found`   | Repository ID not found in database            |
 | `git_error`        | Git operation failed (clone, worktree, etc.)   |
 | `connection_not_found` | SSH connection ID not found in database    |
+| `rate_limited`     | Too many failed login attempts from this IP    |
+| `username_taken`   | Registration with an existing username          |
+| `google_not_configured` | Google login attempted without `CC_MANAGER_GOOGLE_CLIENT_ID` |
+| `invalid_google_token`  | Google ID token verification or audience mismatch |
 
 #### `pong`
 
@@ -775,6 +933,12 @@ All configuration is via environment variables prefixed `CC_MANAGER_`.
 
 | Variable                          | Default                  | Description                        |
 | --------------------------------- | ------------------------ | ---------------------------------- |
+| `CC_MANAGER_AUTH_TOKEN`            | *(unset)*               | Bearer token for API auth; when unset, auth is disabled |
+| `CC_MANAGER_GOOGLE_CLIENT_ID`     | *(unset)*               | Google OAuth client ID; enables Google sign-in when set |
+| `CC_MANAGER_COOKIE_SECURE`        | `auto`                  | Cookie `Secure` flag: `auto` (based on request protocol), `always`, or `never` |
+| `CC_MANAGER_RATE_LIMIT_WINDOW_SECS` | `900`                 | Rate limit window in seconds for login attempts         |
+| `CC_MANAGER_RATE_LIMIT_MAX_ATTEMPTS` | `10`                 | Max failed login attempts per IP within the window      |
+| `CC_MANAGER_TRUST_PROXY`          | `false`                 | Trust `X-Forwarded-For` header for client IP extraction |
 | `CC_MANAGER_HOST`                 | `127.0.0.1`             | Bind address                       |
 | `CC_MANAGER_PORT`                 | `8787`                  | Bind port                          |
 | `CC_MANAGER_DB_PATH`              | `~/.cc-manager/manager.db` | SQLite database path            |
@@ -860,3 +1024,23 @@ Each SSH connection gets a persistent tmux session on the remote host. When the 
 | `first_user_text`   | TEXT (nullable)| First user message text        |
 | `last_assistant_text`| TEXT (nullable)| Last assistant message text   |
 | `last_indexed_at`   | INTEGER        | Indexing timestamp (epoch ms)  |
+
+### `auth_users`
+
+| Column          | Type    | Description                          |
+| --------------- | ------- | ------------------------------------ |
+| `id`            | TEXT PK | User identifier (UUID)               |
+| `username`      | TEXT    | Username (unique, case-insensitive)  |
+| `password_hash` | TEXT    | Bcrypt password hash                 |
+| `created_at`    | INTEGER | Creation timestamp (epoch ms)        |
+
+### `auth_sessions`
+
+| Column       | Type    | Description                          |
+| ------------ | ------- | ------------------------------------ |
+| `id`         | TEXT PK | Session identifier (UUID)            |
+| `user_id`    | TEXT FK | References `auth_users.id` (CASCADE) |
+| `expires_at` | INTEGER | Expiration timestamp (epoch ms)      |
+| `created_at` | INTEGER | Creation timestamp (epoch ms)        |
+
+Sessions expire after 7 days. Expired sessions are cleaned up opportunistically during login and periodically (every 15 seconds) in the background.
