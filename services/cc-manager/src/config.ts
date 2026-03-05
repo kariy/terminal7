@@ -16,6 +16,7 @@ export interface ManagerConfig {
 	rateLimitWindowMs: number;
 	rateLimitMaxAttempts: number;
 	trustProxy: boolean;
+	baseUrl?: string;
 	discord?: {
 		token: string;
 		defaultCwd: string;
@@ -83,6 +84,8 @@ export function loadConfig(): ManagerConfig {
 	const rateLimitMaxAttempts = parseIntegerEnv("CC_MANAGER_RATE_LIMIT_MAX_ATTEMPTS", 10);
 	const trustProxy = process.env.CC_MANAGER_TRUST_PROXY === "true";
 
+	const baseUrl = process.env.CC_MANAGER_BASE_URL || undefined;
+
 	return {
 		host: process.env.CC_MANAGER_HOST ?? "127.0.0.1",
 		port: parseIntegerEnv("CC_MANAGER_PORT", 8787),
@@ -98,6 +101,7 @@ export function loadConfig(): ManagerConfig {
 		rateLimitWindowMs,
 		rateLimitMaxAttempts,
 		trustProxy,
+		baseUrl,
 		discord,
 	};
 }

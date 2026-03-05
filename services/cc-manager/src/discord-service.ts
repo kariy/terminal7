@@ -13,8 +13,10 @@ import type {
 	ToolPermissionRequest,
 } from "./claude-service";
 import { isExitPlanModeTool, isAskUserQuestionTool } from "./claude-service";
+import { isAuthEnabled, DISCORD_LINK_CODE_TTL_MS } from "./auth";
 import { encodeCwd, truncate } from "./utils";
 import { log } from "./logger";
+import { nowMs } from "./utils";
 
 const DISCORD_MAX_LENGTH = 2000;
 const REACTION_TIMEOUT_MS = 5 * 60 * 1000;
@@ -73,6 +75,37 @@ export class DiscordService {
 		const stripMention = (text: string) =>
 			text.replace(new RegExp(`<@!?${this.client!.user!.id}>`, "g"), "").trim();
 
+		// Determine if this message is directed at us
+		const isThread = message.channel.isThread();
+		const isMention = !isThread && message.mentions.has(this.client.user.id);
+		const threadMapping = isThread
+			? this.repository.getDiscordThreadSession(message.channel.id)
+			: null;
+
+		// Only process messages we care about
+		if (!isThread && !isMention) return;
+		if (isThread && !threadMapping) return;
+
+		// Auth gate: check if Discord user is linked
+		if (isAuthEnabled(this.globalConfig, this.repository)) {
+			const link = this.repository.getDiscordUserLink(message.author.id);
+			if (!link) {
+				const code = crypto.randomUUID();
+				this.repository.createDiscordLinkCode({
+					code,
+					discordUserId: message.author.id,
+					discordUsername: message.author.username,
+					expiresAt: nowMs() + DISCORD_LINK_CODE_TTL_MS,
+				});
+				const baseUrl = this.globalConfig.baseUrl ?? `http://${this.globalConfig.host}:${this.globalConfig.port}`;
+				const linkUrl = `${baseUrl}/v1/auth/discord/link?code=${code}`;
+				await message.reply(
+					`You need to link your Discord account before I can respond. Click here to link: ${linkUrl}`,
+				);
+				return;
+			}
+		}
+
 		// Fetch replied-to message content if this is a reply
 		let replyContext = "";
 		if (message.reference?.messageId) {
@@ -87,28 +120,22 @@ export class DiscordService {
 		}
 
 		// In threads we manage, respond to all messages (no mention needed)
-		if (message.channel.isThread()) {
-			const threadId = message.channel.id;
-			const mapping = this.repository.getDiscordThreadSession(threadId);
-			if (!mapping) return;
-
+		if (isThread && threadMapping) {
 			const prompt = replyContext + stripMention(message.content);
 			if (!prompt) return;
 
-			this.enqueueForThread(threadId, () =>
+			this.enqueueForThread(message.channel.id, () =>
 				this.executePrompt(
 					message.channel as ThreadChannel,
 					prompt,
-					mapping.cwd,
-					mapping.sessionId,
+					threadMapping.cwd,
+					threadMapping.sessionId,
 				),
 			);
 			return;
 		}
 
 		// In channels, require a mention to start a new thread
-		if (!message.mentions.has(this.client.user.id)) return;
-
 		const prompt = replyContext + stripMention(message.content);
 		if (!prompt) return;
 

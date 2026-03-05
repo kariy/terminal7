@@ -15,6 +15,8 @@ import {
 	handleAuthStatus,
 	handleRegister,
 	handleGoogleLogin,
+	handleDiscordLinkPage,
+	handleDiscordLink,
 	isAuthEnabled,
 	type AuthDeps,
 } from "./auth";
@@ -139,6 +141,9 @@ export function createServer(deps: ServerDeps): ServerHandle {
 			if (pathname === "/v1/auth/google" && req.method === "POST") {
 				return handleGoogleLogin(req, reqAuthDeps);
 			}
+			if (pathname === "/v1/auth/discord/link" && req.method === "GET") {
+				return handleDiscordLinkPage(req, reqAuthDeps);
+			}
 
 			// Auth gate: require valid auth for /v1/* routes
 			if (
@@ -151,6 +156,9 @@ export function createServer(deps: ServerDeps): ServerHandle {
 			// Auth info (after auth gate so it can return user info)
 			if (pathname === "/v1/auth/me" && req.method === "GET") {
 				return handleAuthMe(req, reqAuthDeps);
+			}
+			if (pathname === "/v1/auth/discord/link" && req.method === "POST") {
+				return handleDiscordLink(req, reqAuthDeps);
 			}
 
 			if (pathname === "/v1/ws") {
@@ -513,6 +521,7 @@ if (import.meta.main) {
 			);
 		}
 		repository.deleteExpiredAuthSessions();
+		repository.deleteExpiredDiscordLinkCodes();
 	}, 15000);
 
 	for (const signal of ["SIGINT", "SIGTERM"]) {

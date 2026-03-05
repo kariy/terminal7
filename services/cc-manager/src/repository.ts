@@ -2,6 +2,8 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "fs";
 import { dirname } from "path";
 import type {
+	AuthSession,
+	AuthUser,
 	JsonlIndexUpdate,
 	RepositoryInfo,
 	SessionListCursor,
@@ -47,6 +49,20 @@ interface SshConnectionRow {
 	title: string;
 	created_at: number;
 	last_connected_at: number;
+}
+
+interface AuthUserRow {
+	id: string;
+	username: string;
+	password_hash: string;
+	created_at: number;
+}
+
+interface AuthSessionRow {
+	id: string;
+	user_id: string;
+	expires_at: number;
+	created_at: number;
 }
 
 interface FileIndexRow {
@@ -281,6 +297,79 @@ export class ManagerRepository {
 				this.db
 					.query(
 						"INSERT INTO schema_migrations (version, applied_at) VALUES (6, ?)",
+					)
+					.run(nowMs());
+			})();
+		}
+
+		// V7: Add auth_users and auth_sessions tables
+		const hasV7 = this.db
+			.query("SELECT 1 FROM schema_migrations WHERE version = 7")
+			.get() as { "1": number } | null;
+		if (!hasV7) {
+			this.db.transaction(() => {
+				this.db.exec(`
+					CREATE TABLE IF NOT EXISTS auth_users (
+						id TEXT PRIMARY KEY,
+						username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+						password_hash TEXT NOT NULL,
+						created_at INTEGER NOT NULL
+					);
+				`);
+
+				this.db.exec(`
+					CREATE TABLE IF NOT EXISTS auth_sessions (
+						id TEXT PRIMARY KEY,
+						user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+						expires_at INTEGER NOT NULL,
+						created_at INTEGER NOT NULL
+					);
+				`);
+				this.db.exec(
+					"CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);",
+				);
+				this.db.exec(
+					"CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires ON auth_sessions(expires_at);",
+				);
+
+				this.db
+					.query(
+						"INSERT INTO schema_migrations (version, applied_at) VALUES (7, ?)",
+					)
+					.run(nowMs());
+			})();
+		}
+
+		// V8: Add discord_user_links and discord_link_codes tables
+		const hasV8 = this.db
+			.query("SELECT 1 FROM schema_migrations WHERE version = 8")
+			.get() as { "1": number } | null;
+		if (!hasV8) {
+			this.db.transaction(() => {
+				this.db.exec(`
+					CREATE TABLE IF NOT EXISTS discord_user_links (
+						discord_user_id TEXT PRIMARY KEY,
+						auth_user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+						created_at INTEGER NOT NULL
+					);
+				`);
+				this.db.exec(
+					"CREATE INDEX IF NOT EXISTS idx_discord_user_links_auth ON discord_user_links(auth_user_id);",
+				);
+
+				this.db.exec(`
+					CREATE TABLE IF NOT EXISTS discord_link_codes (
+						code TEXT PRIMARY KEY,
+						discord_user_id TEXT NOT NULL,
+						discord_username TEXT NOT NULL,
+						expires_at INTEGER NOT NULL,
+						created_at INTEGER NOT NULL
+					);
+				`);
+
+				this.db
+					.query(
+						"INSERT INTO schema_migrations (version, applied_at) VALUES (8, ?)",
 					)
 					.run(nowMs());
 			})();
@@ -1092,6 +1181,207 @@ export class ManagerRepository {
 				params.cwd,
 				nowMs(),
 			);
+	}
+
+	// ── Auth users ──────────────────────────────────────────────────
+
+	createAuthUser(params: {
+		id: string;
+		username: string;
+		passwordHash: string;
+	}): AuthUser {
+		const now = nowMs();
+		this.db
+			.query(
+				`INSERT INTO auth_users (id, username, password_hash, created_at)
+				 VALUES (?, ?, ?, ?)`,
+			)
+			.run(params.id, params.username, params.passwordHash, now);
+		return {
+			id: params.id,
+			username: params.username,
+			passwordHash: params.passwordHash,
+			createdAt: now,
+		};
+	}
+
+	getAuthUserByUsername(username: string): AuthUser | null {
+		const row = this.db
+			.query("SELECT * FROM auth_users WHERE username = ?")
+			.get(username) as AuthUserRow | null;
+		return row ? this.mapAuthUserRow(row) : null;
+	}
+
+	getAuthUser(id: string): AuthUser | null {
+		const row = this.db
+			.query("SELECT * FROM auth_users WHERE id = ?")
+			.get(id) as AuthUserRow | null;
+		return row ? this.mapAuthUserRow(row) : null;
+	}
+
+	listAuthUsers(): AuthUser[] {
+		const rows = this.db
+			.query("SELECT * FROM auth_users ORDER BY created_at ASC")
+			.all() as AuthUserRow[];
+		return rows.map((r) => this.mapAuthUserRow(r));
+	}
+
+	deleteAuthUser(id: string): boolean {
+		const result = this.db
+			.query("DELETE FROM auth_users WHERE id = ?")
+			.run(id);
+		return result.changes > 0;
+	}
+
+	updateAuthUserPassword(id: string, passwordHash: string): boolean {
+		const result = this.db
+			.query("UPDATE auth_users SET password_hash = ? WHERE id = ?")
+			.run(passwordHash, id);
+		return result.changes > 0;
+	}
+
+	private mapAuthUserRow(row: AuthUserRow): AuthUser {
+		return {
+			id: row.id,
+			username: row.username,
+			passwordHash: row.password_hash,
+			createdAt: row.created_at,
+		};
+	}
+
+	// ── Auth sessions ───────────────────────────────────────────────
+
+	createAuthSession(params: {
+		id: string;
+		userId: string;
+		expiresAt: number;
+	}): AuthSession {
+		const now = nowMs();
+		this.db
+			.query(
+				`INSERT INTO auth_sessions (id, user_id, expires_at, created_at)
+				 VALUES (?, ?, ?, ?)`,
+			)
+			.run(params.id, params.userId, params.expiresAt, now);
+		return {
+			id: params.id,
+			userId: params.userId,
+			expiresAt: params.expiresAt,
+			createdAt: now,
+		};
+	}
+
+	getAuthSession(id: string): (AuthSession & { username: string }) | null {
+		const row = this.db
+			.query(
+				`SELECT s.*, u.username FROM auth_sessions s
+				 JOIN auth_users u ON u.id = s.user_id
+				 WHERE s.id = ?`,
+			)
+			.get(id) as (AuthSessionRow & { username: string }) | null;
+		if (!row) return null;
+		return {
+			id: row.id,
+			userId: row.user_id,
+			expiresAt: row.expires_at,
+			createdAt: row.created_at,
+			username: row.username,
+		};
+	}
+
+	deleteAuthSession(id: string): void {
+		this.db.query("DELETE FROM auth_sessions WHERE id = ?").run(id);
+	}
+
+	deleteExpiredAuthSessions(): number {
+		const result = this.db
+			.query("DELETE FROM auth_sessions WHERE expires_at < ?")
+			.run(nowMs());
+		return result.changes;
+	}
+
+	// ── Discord user links ─────────────────────────────────────────
+
+	getDiscordUserLink(
+		discordUserId: string,
+	): { authUserId: string } | null {
+		const row = this.db
+			.query(
+				"SELECT auth_user_id FROM discord_user_links WHERE discord_user_id = ?",
+			)
+			.get(discordUserId) as { auth_user_id: string } | null;
+		if (!row) return null;
+		return { authUserId: row.auth_user_id };
+	}
+
+	createDiscordUserLink(params: {
+		discordUserId: string;
+		authUserId: string;
+	}): void {
+		this.db
+			.query(
+				`INSERT OR REPLACE INTO discord_user_links (discord_user_id, auth_user_id, created_at)
+				 VALUES (?, ?, ?)`,
+			)
+			.run(params.discordUserId, params.authUserId, nowMs());
+	}
+
+	deleteDiscordUserLink(discordUserId: string): boolean {
+		const result = this.db
+			.query("DELETE FROM discord_user_links WHERE discord_user_id = ?")
+			.run(discordUserId);
+		return result.changes > 0;
+	}
+
+	// ── Discord link codes ─────────────────────────────────────────
+
+	createDiscordLinkCode(params: {
+		code: string;
+		discordUserId: string;
+		discordUsername: string;
+		expiresAt: number;
+	}): void {
+		this.db
+			.query(
+				`INSERT OR REPLACE INTO discord_link_codes (code, discord_user_id, discord_username, expires_at, created_at)
+				 VALUES (?, ?, ?, ?, ?)`,
+			)
+			.run(
+				params.code,
+				params.discordUserId,
+				params.discordUsername,
+				params.expiresAt,
+				nowMs(),
+			);
+	}
+
+	getDiscordLinkCode(
+		code: string,
+	): { discordUserId: string; discordUsername: string; expiresAt: number } | null {
+		const row = this.db
+			.query("SELECT discord_user_id, discord_username, expires_at FROM discord_link_codes WHERE code = ?")
+			.get(code) as {
+			discord_user_id: string;
+			discord_username: string;
+			expires_at: number;
+		} | null;
+		if (!row) return null;
+		return {
+			discordUserId: row.discord_user_id,
+			discordUsername: row.discord_username,
+			expiresAt: row.expires_at,
+		};
+	}
+
+	deleteDiscordLinkCode(code: string): void {
+		this.db.query("DELETE FROM discord_link_codes WHERE code = ?").run(code);
+	}
+
+	deleteExpiredDiscordLinkCodes(): number {
+		const result = this.db
+			.query("DELETE FROM discord_link_codes WHERE expires_at < ?")
+			.run(nowMs());
+		return result.changes;
 	}
 
 	close(): void {

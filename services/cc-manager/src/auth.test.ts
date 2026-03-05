@@ -1,4 +1,4 @@
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, afterEach, beforeAll, afterAll } from "bun:test";
 import {
 	createTestServer,
 	destroyTestServer,
@@ -6,6 +6,7 @@ import {
 	type TestContext,
 } from "./test-utils";
 import { hashPassword, validatePassword } from "./auth";
+import { nowMs } from "./utils";
 
 describe("Authentication", () => {
 	let ctx: TestContext;
@@ -616,6 +617,201 @@ describe("Authentication", () => {
 		test("accepts any non-empty password", () => {
 			expect(validatePassword("a").valid).toBe(true);
 			expect(validatePassword("admin").valid).toBe(true);
+		});
+	});
+
+	describe("discord linking", () => {
+		let dctx: TestContext;
+		let sessionCookie: string;
+		let testUserId: string;
+
+		beforeAll(async () => {
+			dctx = createTestServer();
+			testUserId = crypto.randomUUID();
+			const passwordHash = await hashPassword("testpass123");
+			dctx.repository.createAuthUser({
+				id: testUserId,
+				username: "testuser",
+				passwordHash,
+			});
+			const loginRes = await fetch(`${dctx.baseUrl}/v1/auth/login`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ username: "testuser", password: "testpass123" }),
+			});
+			const setCookie = loginRes.headers.get("set-cookie") ?? "";
+			const match = setCookie.match(/cc_session=([^;]+)/);
+			sessionCookie = match ? match[1] : "";
+		});
+
+		afterAll(() => {
+			destroyTestServer(dctx);
+		});
+
+		test("POST confirms link with valid code", async () => {
+			const code = crypto.randomUUID();
+			dctx.repository.createDiscordLinkCode({
+				code,
+				discordUserId: "discord-123",
+				discordUsername: "testdiscord",
+				expiresAt: nowMs() + 600_000,
+			});
+
+			const res = await fetch(`${dctx.baseUrl}/v1/auth/discord/link`, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					cookie: `cc_session=${sessionCookie}`,
+				},
+				body: JSON.stringify({ code }),
+			});
+
+			expect(res.status).toBe(200);
+			const body = await res.json();
+			expect(body.ok).toBe(true);
+			expect(body.discord_username).toBe("testdiscord");
+
+			const link = dctx.repository.getDiscordUserLink("discord-123");
+			expect(link).not.toBeNull();
+			expect(link!.authUserId).toBe(testUserId);
+
+			expect(dctx.repository.getDiscordLinkCode(code)).toBeNull();
+		});
+
+		test("POST rejects expired code", async () => {
+			const code = crypto.randomUUID();
+			dctx.repository.createDiscordLinkCode({
+				code,
+				discordUserId: "discord-456",
+				discordUsername: "expireduser",
+				expiresAt: nowMs() - 1000,
+			});
+
+			const res = await fetch(`${dctx.baseUrl}/v1/auth/discord/link`, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					cookie: `cc_session=${sessionCookie}`,
+				},
+				body: JSON.stringify({ code }),
+			});
+
+			expect(res.status).toBe(400);
+			const body = await res.json();
+			expect(body.error.code).toBe("code_expired");
+		});
+
+		test("POST rejects invalid code", async () => {
+			const res = await fetch(`${dctx.baseUrl}/v1/auth/discord/link`, {
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					cookie: `cc_session=${sessionCookie}`,
+				},
+				body: JSON.stringify({ code: "nonexistent-code" }),
+			});
+
+			expect(res.status).toBe(404);
+			const body = await res.json();
+			expect(body.error.code).toBe("code_not_found");
+		});
+
+		test("POST requires auth", async () => {
+			const code = crypto.randomUUID();
+			dctx.repository.createDiscordLinkCode({
+				code,
+				discordUserId: "discord-789",
+				discordUsername: "noauthuser",
+				expiresAt: nowMs() + 600_000,
+			});
+
+			const res = await fetch(`${dctx.baseUrl}/v1/auth/discord/link`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ code }),
+			});
+
+			expect(res.status).toBe(401);
+		});
+
+		test("GET shows confirmation when logged in", async () => {
+			const code = crypto.randomUUID();
+			dctx.repository.createDiscordLinkCode({
+				code,
+				discordUserId: "discord-page-1",
+				discordUsername: "pageuser",
+				expiresAt: nowMs() + 600_000,
+			});
+
+			const res = await fetch(
+				`${dctx.baseUrl}/v1/auth/discord/link?code=${code}`,
+				{ headers: { cookie: `cc_session=${sessionCookie}` } },
+			);
+
+			expect(res.status).toBe(200);
+			const html = await res.text();
+			expect(html).toContain("pageuser");
+			expect(html).toContain("Confirm Link");
+		});
+
+		test("GET shows login prompt when not logged in", async () => {
+			const code = crypto.randomUUID();
+			dctx.repository.createDiscordLinkCode({
+				code,
+				discordUserId: "discord-page-2",
+				discordUsername: "nologinuser",
+				expiresAt: nowMs() + 600_000,
+			});
+
+			const res = await fetch(
+				`${dctx.baseUrl}/v1/auth/discord/link?code=${code}`,
+			);
+
+			expect(res.status).toBe(401);
+			const html = await res.text();
+			expect(html).toContain("Log in");
+		});
+
+		test("GET returns 404 for invalid code", async () => {
+			const res = await fetch(
+				`${dctx.baseUrl}/v1/auth/discord/link?code=bogus`,
+			);
+			expect(res.status).toBe(404);
+		});
+
+		test("repository discord user link CRUD", () => {
+			dctx.repository.createDiscordUserLink({
+				discordUserId: "crud-test-1",
+				authUserId: testUserId,
+			});
+
+			const link = dctx.repository.getDiscordUserLink("crud-test-1");
+			expect(link).not.toBeNull();
+			expect(link!.authUserId).toBe(testUserId);
+
+			expect(dctx.repository.deleteDiscordUserLink("crud-test-1")).toBe(true);
+			expect(dctx.repository.getDiscordUserLink("crud-test-1")).toBeNull();
+			expect(dctx.repository.deleteDiscordUserLink("crud-test-1")).toBe(false);
+		});
+
+		test("expired link codes are cleaned up", () => {
+			dctx.repository.createDiscordLinkCode({
+				code: "expired-1",
+				discordUserId: "d-1",
+				discordUsername: "u-1",
+				expiresAt: nowMs() - 1000,
+			});
+			dctx.repository.createDiscordLinkCode({
+				code: "valid-1",
+				discordUserId: "d-2",
+				discordUsername: "u-2",
+				expiresAt: nowMs() + 600_000,
+			});
+
+			const cleaned = dctx.repository.deleteExpiredDiscordLinkCodes();
+			expect(cleaned).toBeGreaterThanOrEqual(1);
+			expect(dctx.repository.getDiscordLinkCode("expired-1")).toBeNull();
+			expect(dctx.repository.getDiscordLinkCode("valid-1")).not.toBeNull();
 		});
 	});
 

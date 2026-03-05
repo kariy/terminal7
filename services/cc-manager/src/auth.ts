@@ -601,3 +601,195 @@ export function unauthorizedResponse(): Response {
 export function extractSessionCookie(req: Request): string | null {
 	return getSessionCookie(req);
 }
+
+/**
+ * Get the authenticated user from a request (session cookie or bearer token).
+ * Returns the AuthUser or null if not authenticated.
+ */
+export function getAuthenticatedUser(
+	req: Request,
+	deps: AuthDeps,
+): AuthUser | null {
+	const { config, repository } = deps;
+
+	// Check session cookie
+	const sessionId = getSessionCookie(req);
+	if (sessionId) {
+		const session = repository.getAuthSession(sessionId);
+		if (session && session.expiresAt > nowMs()) {
+			const user = repository.getAuthUser(session.userId);
+			if (user) return user;
+		}
+	}
+
+	// Check query param token as session ID
+	const url = new URL(req.url);
+	const tokenParam = url.searchParams.get("token");
+	if (tokenParam) {
+		const session = repository.getAuthSession(tokenParam);
+		if (session && session.expiresAt > nowMs()) {
+			const user = repository.getAuthUser(session.userId);
+			if (user) return user;
+		}
+	}
+
+	return null;
+}
+
+const DISCORD_LINK_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Handle GET /v1/auth/discord/link — show confirmation page or redirect to login.
+ */
+export function handleDiscordLinkPage(
+	req: Request,
+	deps: AuthDeps,
+): Response {
+	const url = new URL(req.url);
+	const code = url.searchParams.get("code");
+
+	if (!code) {
+		return jsonResponse(400, {
+			error: { code: "invalid_params", message: "code is required" },
+		});
+	}
+
+	const linkCode = deps.repository.getDiscordLinkCode(code);
+	if (!linkCode) {
+		return new Response(htmlPage("Link Failed", "<p>Invalid or expired link code.</p>"), {
+			status: 404,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	if (linkCode.expiresAt < nowMs()) {
+		deps.repository.deleteDiscordLinkCode(code);
+		return new Response(htmlPage("Link Expired", "<p>This link code has expired. Please run the command again in Discord.</p>"), {
+			status: 410,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	const user = getAuthenticatedUser(req, deps);
+	if (!user) {
+		// Redirect to login with a return URL
+		const returnUrl = `/v1/auth/discord/link?code=${encodeURIComponent(code)}`;
+		return new Response(htmlPage("Login Required",
+			`<p>You need to log in to link your Discord account.</p>
+			<p><a href="/?discord_link=${encodeURIComponent(code)}">Log in and link account</a></p>`), {
+			status: 401,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	const escaped = escapeHtml(linkCode.discordUsername);
+	return new Response(htmlPage("Link Discord Account",
+		`<p>Link Discord account <strong>@${escaped}</strong> to your account <strong>${escapeHtml(user.username)}</strong>?</p>
+		<form method="POST" action="/v1/auth/discord/link">
+			<input type="hidden" name="code" value="${escapeHtml(code)}" />
+			<button type="submit" style="padding:8px 24px;font-size:16px;cursor:pointer;">Confirm Link</button>
+		</form>`), {
+		status: 200,
+		headers: { "content-type": "text/html; charset=utf-8" },
+	});
+}
+
+/**
+ * Handle POST /v1/auth/discord/link — confirm the link.
+ */
+export async function handleDiscordLink(
+	req: Request,
+	deps: AuthDeps,
+): Promise<Response> {
+	const user = getAuthenticatedUser(req, deps);
+	if (!user) {
+		return unauthorizedResponse();
+	}
+
+	let code: string | undefined;
+	const contentType = req.headers.get("content-type") ?? "";
+
+	if (contentType.includes("application/json")) {
+		try {
+			const body = await req.json() as { code?: string };
+			code = body.code;
+		} catch {
+			return jsonResponse(400, {
+				error: { code: "invalid_json", message: "Invalid JSON body" },
+			});
+		}
+	} else if (contentType.includes("application/x-www-form-urlencoded")) {
+		const text = await req.text();
+		const params = new URLSearchParams(text);
+		code = params.get("code") ?? undefined;
+	} else {
+		try {
+			const body = await req.json() as { code?: string };
+			code = body.code;
+		} catch {
+			return jsonResponse(400, {
+				error: { code: "invalid_json", message: "Invalid request body" },
+			});
+		}
+	}
+
+	if (!code) {
+		return jsonResponse(400, {
+			error: { code: "invalid_params", message: "code is required" },
+		});
+	}
+
+	const linkCode = deps.repository.getDiscordLinkCode(code);
+	if (!linkCode) {
+		return jsonResponse(404, {
+			error: { code: "code_not_found", message: "Link code not found" },
+		});
+	}
+
+	if (linkCode.expiresAt < nowMs()) {
+		deps.repository.deleteDiscordLinkCode(code);
+		return jsonResponse(400, {
+			error: { code: "code_expired", message: "Link code has expired" },
+		});
+	}
+
+	deps.repository.createDiscordUserLink({
+		discordUserId: linkCode.discordUserId,
+		authUserId: user.id,
+	});
+	deps.repository.deleteDiscordLinkCode(code);
+
+	log.auth(`discord_link discord_user=${linkCode.discordUsername} auth_user=${user.username}`);
+
+	// If the request came from a form, return HTML
+	if (contentType.includes("application/x-www-form-urlencoded")) {
+		return new Response(htmlPage("Account Linked",
+			`<p>Discord account <strong>@${escapeHtml(linkCode.discordUsername)}</strong> has been linked to your account.</p>
+			<p>You can close this page and return to Discord.</p>`), {
+			status: 200,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	return jsonResponse(200, {
+		ok: true,
+		discord_username: linkCode.discordUsername,
+	});
+}
+
+function escapeHtml(str: string): string {
+	return str
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;");
+}
+
+function htmlPage(title: string, body: string): string {
+	return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title>
+<style>body{font-family:system-ui,sans-serif;max-width:480px;margin:60px auto;padding:0 20px;color:#222}button{background:#5865F2;color:#fff;border:none;border-radius:4px}</style>
+</head><body><h1>${escapeHtml(title)}</h1>${body}</body></html>`;
+}
+
+export { DISCORD_LINK_CODE_TTL_MS };
