@@ -5,7 +5,6 @@ import {
   login,
   register,
   googleLogin,
-  setAuthToken,
   fetchAuthStatus,
   type AuthStatus,
 } from "@/lib/auth";
@@ -34,7 +33,7 @@ interface AuthDialogProps {
   onAuthenticated: () => void;
 }
 
-type Mode = "loading" | "login" | "register" | "token";
+type Mode = "loading" | "login" | "register";
 
 export function AuthDialog({ onAuthenticated }: AuthDialogProps) {
   const [mode, setMode] = useState<Mode>("loading");
@@ -42,7 +41,6 @@ export function AuthDialog({ onAuthenticated }: AuthDialogProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -118,14 +116,6 @@ export function AuthDialog({ onAuthenticated }: AuthDialogProps) {
     }
   };
 
-  const handleTokenSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = token.trim();
-    if (!trimmed) return;
-    setAuthToken(trimmed);
-    onAuthenticated();
-  };
-
   if (mode === "loading") {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -195,22 +185,13 @@ export function AuthDialog({ onAuthenticated }: AuthDialogProps) {
               >
                 {loading ? "Signing in..." : "Sign In"}
               </Button>
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => { setMode("register"); setError(null); }}
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Create account
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setMode("token"); setError(null); }}
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                >
-                  Use API token
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => { setMode("register"); setError(null); }}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                Create account
+              </button>
             </CardFooter>
           </form>
         )}
@@ -294,41 +275,6 @@ export function AuthDialog({ onAuthenticated }: AuthDialogProps) {
           </form>
         )}
 
-        {mode === "token" && (
-          <form onSubmit={handleTokenSubmit}>
-            <CardHeader>
-              <CardTitle>API Token</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Enter a Bearer API token to authenticate.
-              </p>
-            </CardHeader>
-            <CardContent>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                Token
-              </label>
-              <input
-                type="password"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="Enter auth token"
-                autoFocus
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-            </CardContent>
-            <CardFooter className="flex-col gap-2">
-              <Button type="submit" className="w-full" disabled={!token.trim()}>
-                Connect
-              </Button>
-              <button
-                type="button"
-                onClick={() => { setMode("login"); setError(null); }}
-                className="text-xs text-muted-foreground hover:text-foreground"
-              >
-                Sign in with username instead
-              </button>
-            </CardFooter>
-          </form>
-        )}
       </Card>
     </div>
   );
