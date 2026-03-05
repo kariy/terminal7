@@ -40,7 +40,7 @@ function buildSetCookieHeader(
 		`${name}=${value}`,
 		"Path=/",
 		"HttpOnly",
-		"SameSite=Strict",
+		"SameSite=Lax",
 		`Max-Age=${maxAge}`,
 	];
 	if (secure) parts.push("Secure");
@@ -750,12 +750,12 @@ export function handleDiscordLinkInitiate(
 	repository.createDiscordLinkCode({
 		code,
 		discordUserId: WEB_INITIATED_DISCORD_USER_ID,
-		discordUsername: "web-initiated",
+		discordUsername: user.id, // store auth user ID for callback lookup
 		expiresAt: nowMs() + DISCORD_LINK_CODE_TTL_MS,
 	});
 
-	const baseUrl = config.baseUrl ?? `http://${config.host}:${config.port}`;
-	const redirectUri = `${baseUrl}/v1/auth/discord/callback`;
+	const origin = req.headers.get("origin") || config.baseUrl || `http://${config.host}:${config.port}`;
+	const redirectUri = `${origin}/v1/auth/discord/callback`;
 	const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${encodeURIComponent(config.discordClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify&state=${encodeURIComponent(code)}`;
 
 	log.auth(`discord_link_initiate username=${user.username}`);
@@ -965,9 +965,10 @@ export async function handleDiscordCallback(
 		});
 	}
 
-	// Exchange authorization code for access token
-	const baseUrl = config.baseUrl ?? `http://${config.host}:${config.port}`;
-	const redirectUri = `${baseUrl}/v1/auth/discord/callback`;
+	// Exchange authorization code for access token — use request URL origin so it matches
+	// the redirect_uri sent during authorization (which used the browser's origin)
+	const callbackOrigin = new URL(req.url).origin;
+	const redirectUri = `${callbackOrigin}/v1/auth/discord/callback`;
 
 	let tokenData: { access_token?: string; token_type?: string };
 	try {
@@ -1044,8 +1045,17 @@ export async function handleDiscordCallback(
 		});
 	}
 
-	// Require the user to be logged in — Discord OAuth is for identity verification, not registration
-	const user = getAuthenticatedUser(req, deps);
+	// Resolve the authenticated user — for web-initiated flows, the session cookie may not
+	// be sent (cross-site redirect), so fall back to the auth user ID stored in the link code.
+	const isWebInitiated = linkCode.discordUserId === WEB_INITIATED_DISCORD_USER_ID;
+	let user = getAuthenticatedUser(req, deps);
+	if (!user && isWebInitiated) {
+		// linkCode.discordUsername holds the auth user ID for web-initiated flows
+		const authUser = repository.getAuthUser(linkCode.discordUsername);
+		if (authUser) {
+			user = { id: authUser.id, username: authUser.username };
+		}
+	}
 	if (!user) {
 		const linkPageUrl = `/v1/auth/discord/link?code=${encodeURIComponent(state)}`;
 		return new Response(htmlPage("Login Required",
@@ -1067,7 +1077,6 @@ export async function handleDiscordCallback(
 
 	log.auth(`discord_oauth_link discord_user=${discordUser.username} auth_user=${user.username}`);
 
-	const isWebInitiated = linkCode.discordUserId === WEB_INITIATED_DISCORD_USER_ID;
 	const returnMessage = isWebInitiated
 		? `<p><a href="/">Return to the app</a></p>`
 		: `<p>You can close this page and return to Discord.</p>`;
