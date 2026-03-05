@@ -17,6 +17,8 @@ export interface ManagerConfig {
 	rateLimitMaxAttempts: number;
 	trustProxy: boolean;
 	baseUrl?: string;
+	discordClientId?: string;
+	discordClientSecret?: string;
 	discord?: {
 		token: string;
 		defaultCwd: string;
@@ -76,6 +78,8 @@ export function loadConfig(): ManagerConfig {
 
 	const authToken = process.env.CC_MANAGER_AUTH_TOKEN || undefined;
 	const googleClientId = process.env.CC_MANAGER_GOOGLE_CLIENT_ID || undefined;
+	const discordClientId = process.env.CC_MANAGER_DISCORD_CLIENT_ID || undefined;
+	const discordClientSecret = process.env.CC_MANAGER_DISCORD_CLIENT_SECRET || undefined;
 
 	const cookieSecureRaw = process.env.CC_MANAGER_COOKIE_SECURE ?? "auto";
 	const cookieSecure = (["auto", "always", "never"].includes(cookieSecureRaw) ? cookieSecureRaw : "auto") as "auto" | "always" | "never";
@@ -102,6 +106,8 @@ export function loadConfig(): ManagerConfig {
 		rateLimitMaxAttempts,
 		trustProxy,
 		baseUrl,
+		discordClientId,
+		discordClientSecret,
 		discord,
 	};
 }

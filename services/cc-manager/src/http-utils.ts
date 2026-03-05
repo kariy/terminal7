@@ -7,6 +7,7 @@ export function jsonResponse(
 		status,
 		headers: {
 			"content-type": "application/json; charset=utf-8",
+			"Referrer-Policy": "no-referrer",
 			...headers,
 		},
 	});

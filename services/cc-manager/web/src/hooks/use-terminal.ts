@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { getAuthToken } from "@/lib/auth";
 
 export type TerminalStatus = "idle" | "connecting" | "connected" | "closed";
 
@@ -82,6 +83,7 @@ export function useTerminal() {
       const rows = term.rows;
 
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      const authToken = getAuthToken();
       let endpoint: string;
       if (pending.kind === "session") {
         const params = new URLSearchParams({
@@ -94,6 +96,7 @@ export function useTerminal() {
         if (pending.sshPassword) {
           params.set("ssh_password", pending.sshPassword);
         }
+        if (authToken) params.set("token", authToken);
         endpoint = `${proto}//${location.host}/v1/terminal?${params}`;
       } else if (pending.kind === "ssh-connection") {
         const params = new URLSearchParams({
@@ -104,6 +107,7 @@ export function useTerminal() {
         if (pending.sshPassword) {
           params.set("ssh_password", pending.sshPassword);
         }
+        if (authToken) params.set("token", authToken);
         endpoint = `${proto}//${location.host}/v1/ssh?${params}`;
       } else {
         const params = new URLSearchParams({
@@ -114,6 +118,7 @@ export function useTerminal() {
         if (pending.sshPassword) {
           params.set("ssh_password", pending.sshPassword);
         }
+        if (authToken) params.set("token", authToken);
         endpoint = `${proto}//${location.host}/v1/ssh?${params}`;
       }
       const ws = new WebSocket(endpoint);

@@ -207,6 +207,17 @@ Discord users can link their Discord account to a system user via a web-based fl
 
 Also accepts `application/x-www-form-urlencoded` (from the HTML form), returning an HTML success page.
 
+**`POST /v1/auth/discord/link/initiate`** — Initiate Discord account linking from the web UI (requires auth).
+
+Generates a one-time link code and returns a Discord OAuth2 URL. The user is redirected to Discord to authorize, then the callback links their Discord identity to their account.
+
+```jsonc
+// Response 200
+{ "oauth_url": "https://discord.com/api/oauth2/authorize?..." }
+```
+
+Requires `CC_MANAGER_DISCORD_CLIENT_ID` and `CC_MANAGER_DISCORD_CLIENT_SECRET` to be configured. Returns `400` if Discord OAuth is not configured.
+
 **`GET /v1/auth/discord/callback`** — Discord OAuth2 callback. Exempt from auth gate (handles auth internally).
 
 This endpoint handles the OAuth2 redirect from Discord. The user must be logged in (via session cookie). It:

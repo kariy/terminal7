@@ -720,6 +720,47 @@ export function getAuthenticatedUser(
 }
 
 const DISCORD_LINK_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const WEB_INITIATED_DISCORD_USER_ID = "*";
+
+/**
+ * Handle POST /v1/auth/discord/link/initiate — start Discord linking from the web UI.
+ * Creates a temporary link code and returns the Discord OAuth URL.
+ */
+export function handleDiscordLinkInitiate(
+	req: Request,
+	deps: AuthDeps,
+): Response {
+	const user = getAuthenticatedUser(req, deps);
+	if (!user) {
+		return unauthorizedResponse();
+	}
+
+	const { config, repository } = deps;
+
+	if (!config.discordClientId || !config.discordClientSecret) {
+		return jsonResponse(400, {
+			error: {
+				code: "discord_not_configured",
+				message: "Discord OAuth is not configured on this server",
+			},
+		});
+	}
+
+	const code = crypto.randomUUID();
+	repository.createDiscordLinkCode({
+		code,
+		discordUserId: WEB_INITIATED_DISCORD_USER_ID,
+		discordUsername: "web-initiated",
+		expiresAt: nowMs() + DISCORD_LINK_CODE_TTL_MS,
+	});
+
+	const baseUrl = config.baseUrl ?? `http://${config.host}:${config.port}`;
+	const redirectUri = `${baseUrl}/v1/auth/discord/callback`;
+	const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${encodeURIComponent(config.discordClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify&state=${encodeURIComponent(code)}`;
+
+	log.auth(`discord_link_initiate username=${user.username}`);
+	return jsonResponse(200, { oauth_url: oauthUrl });
+}
 
 /**
  * Handle GET /v1/auth/discord/link — show confirmation page or redirect to login.
@@ -991,7 +1032,8 @@ export async function handleDiscordCallback(
 	}
 
 	// Verify the OAuth2 user matches the Discord user who initiated the link
-	if (discordUser.id !== linkCode.discordUserId) {
+	// (skip check for web-initiated links where any Discord user is accepted)
+	if (linkCode.discordUserId !== WEB_INITIATED_DISCORD_USER_ID && discordUser.id !== linkCode.discordUserId) {
 		return new Response(htmlPage("User Mismatch",
 			`<p>You signed in as a different Discord account than the one that requested the link.</p>
 			<p>Expected: <strong>@${escapeHtml(linkCode.discordUsername)}</strong></p>
@@ -1025,9 +1067,14 @@ export async function handleDiscordCallback(
 
 	log.auth(`discord_oauth_link discord_user=${discordUser.username} auth_user=${user.username}`);
 
+	const isWebInitiated = linkCode.discordUserId === WEB_INITIATED_DISCORD_USER_ID;
+	const returnMessage = isWebInitiated
+		? `<p><a href="/">Return to the app</a></p>`
+		: `<p>You can close this page and return to Discord.</p>`;
+
 	return new Response(htmlPage("Account Linked",
 		`<p>Discord account <strong>@${escapeHtml(discordUser.username)}</strong> has been linked successfully.</p>
-		<p>You can close this page and return to Discord.</p>`), {
+		${returnMessage}`), {
 		status: 200,
 		headers: { "content-type": "text/html; charset=utf-8" },
 	});

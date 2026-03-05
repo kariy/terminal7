@@ -52,6 +52,22 @@ export interface JsonlIndexUpdate {
 	fileMtimeMs: number;
 }
 
+// ── Auth types ──────────────────────────────────────────────────
+
+export interface AuthUser {
+	id: string;
+	username: string;
+	passwordHash: string;
+	createdAt: number;
+}
+
+export interface AuthSession {
+	id: string;
+	userId: string;
+	expiresAt: number;
+	createdAt: number;
+}
+
 // ── SSH Connection types ─────────────────────────────────────────
 
 export interface SshConnection {

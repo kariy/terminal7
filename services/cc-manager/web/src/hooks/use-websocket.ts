@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WsClientMessage, WsServerMessage } from "@/types/ws";
+import { getAuthToken } from "@/lib/auth";
 
 export type WsStatus = "connecting" | "connected" | "disconnected";
 
@@ -23,7 +24,9 @@ export function useWebSocket({ onMessage }: UseWebSocketOptions) {
 
     setStatus("connecting");
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${proto}//${location.host}/v1/ws`);
+    const token = getAuthToken();
+    const tokenQs = token ? `?token=${encodeURIComponent(token)}` : "";
+    const ws = new WebSocket(`${proto}//${location.host}/v1/ws${tokenQs}`);
     wsRef.current = ws;
 
     ws.onmessage = (evt) => {
@@ -80,5 +83,10 @@ export function useWebSocket({ onMessage }: UseWebSocketOptions) {
     };
   }, [connect]);
 
-  return { status, send, disconnect };
+  const reconnect = useCallback(() => {
+    intentionalCloseRef.current = false;
+    connect();
+  }, [connect]);
+
+  return { status, send, disconnect, reconnect };
 }

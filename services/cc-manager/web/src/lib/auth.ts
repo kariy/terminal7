@@ -117,6 +117,20 @@ export async function changePassword(
   }
 }
 
+export async function initiateDiscordLink(): Promise<{ oauth_url: string }> {
+  const res = await fetch("/v1/auth/discord/link/initiate", {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const body = await res
+      .json()
+      .catch(() => ({ error: { message: "Failed to initiate Discord link" } }));
+    throw new Error(body.error?.message ?? "Failed to initiate Discord link");
+  }
+  return res.json();
+}
+
 export async function unlinkDiscord(): Promise<void> {
   const res = await fetch("/v1/auth/discord/link", {
     method: "DELETE",

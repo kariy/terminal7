@@ -11,7 +11,7 @@ import type { SDKMessage } from "@/types/sdk-messages";
 import type { SessionListItem, HistoryMessage, SshConnectionItem } from "@/types/api";
 import { fetchSessions, fetchHistory, fetchSshConnections, createSshConnection, deleteSshConnection } from "@/lib/api";
 import { getSshDestination, setSshDestination, getSshPassword, setSshPassword } from "@/lib/settings";
-import { getAuthToken, fetchAuthMe, changePassword, unlinkDiscord, logout } from "@/lib/auth";
+import { getAuthToken, fetchAuthMe, changePassword, unlinkDiscord, initiateDiscordLink, logout } from "@/lib/auth";
 import { UserView } from "@/components/views/UserView";
 import { Header, type HeaderTab } from "@/components/layout/Header";
 import { AuthDialog } from "@/components/AuthDialog";
@@ -1379,6 +1379,11 @@ export default function App() {
     [],
   );
 
+  const handleLinkDiscord = useCallback(async () => {
+    const { oauth_url } = await initiateDiscordLink();
+    window.open(oauth_url, "_blank");
+  }, []);
+
   const handleUnlinkDiscord = useCallback(async () => {
     await unlinkDiscord();
     setUserInfo((prev) => prev ? { ...prev, discordLinks: [] } : prev);
@@ -1567,6 +1572,7 @@ export default function App() {
           authMethod={userInfo.authMethod}
           discordLinks={userInfo.discordLinks}
           onChangePassword={handleChangePassword}
+          onLinkDiscord={handleLinkDiscord}
           onUnlinkDiscord={handleUnlinkDiscord}
           onLogout={handleLogout}
         />

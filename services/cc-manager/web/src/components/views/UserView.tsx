@@ -18,6 +18,7 @@ interface UserViewProps {
     currentPassword: string,
     newPassword: string,
   ) => Promise<void>;
+  onLinkDiscord: () => Promise<void>;
   onUnlinkDiscord: () => Promise<void>;
   onLogout: () => void;
 }
@@ -27,6 +28,7 @@ export function UserView({
   authMethod,
   discordLinks,
   onChangePassword,
+  onLinkDiscord,
   onUnlinkDiscord,
   onLogout,
 }: UserViewProps) {
@@ -37,6 +39,7 @@ export function UserView({
   const [pwSuccess, setPwSuccess] = useState(false);
   const [pwLoading, setPwLoading] = useState(false);
   const [unlinkLoading, setUnlinkLoading] = useState(false);
+  const [linkLoading, setLinkLoading] = useState(false);
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -178,9 +181,28 @@ export function UserView({
               ))}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              No Discord account linked. Use the Discord bot's link command to connect your account.
-            </p>
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                No Discord account linked.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  setLinkLoading(true);
+                  try {
+                    await onLinkDiscord();
+                  } catch {
+                    // handled by caller
+                  } finally {
+                    setLinkLoading(false);
+                  }
+                }}
+                disabled={linkLoading}
+              >
+                {linkLoading ? "Linking..." : "Link Discord Account"}
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>

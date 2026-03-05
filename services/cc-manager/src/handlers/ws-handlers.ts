@@ -1,3 +1,4 @@
+import { isAuthEnabled } from "../auth";
 import type { App } from "../app";
 import type { ToolPermissionDecision, ToolPermissionRequest } from "../claude-service";
 import { repoUrlToSlug } from "../git-service";
@@ -431,7 +432,7 @@ export function createWsHandlers(app: App) {
 			log.ws(`connected connection_id=${ws.data.connectionId}`);
 			wsSend(ws, {
 				type: "hello",
-				requires_auth: false,
+				requires_auth: isAuthEnabled(app.config, app.repository),
 				server_time: nowMs(),
 			});
 		},

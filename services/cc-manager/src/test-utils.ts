@@ -12,6 +12,7 @@ import type {
 import type { TerminalServiceLike, TerminalOpenParams, TerminalHandle } from "./terminal-service";
 import { ManagerRepository } from "./repository";
 import { createServer, type ServerHandle } from "./main";
+import { invalidateAuthCache } from "./auth";
 import { ClaudeJsonlIndexer } from "./jsonl-indexer";
 import type { ManagerConfig } from "./config";
 
@@ -251,6 +252,10 @@ export function createTestServer(overridesOrOpts?: Partial<ManagerConfig> | Crea
 		maxHistoryMessages: 5000,
 		defaultCwd: "/",
 		projectsDir: join(tempDir, "git-projects"),
+		cookieSecure: "never" as const,
+		rateLimitWindowMs: 900_000,
+		rateLimitMaxAttempts: 10,
+		trustProxy: false,
 		...overrides,
 	};
 
@@ -295,6 +300,7 @@ export function createTestServer(overridesOrOpts?: Partial<ManagerConfig> | Crea
 
 export function destroyTestServer(ctx: TestContext): void {
 	ctx.handle.stop();
+	invalidateAuthCache();
 	rmSync(ctx.tempDir, { recursive: true, force: true });
 }
 

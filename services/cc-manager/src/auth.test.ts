@@ -1149,6 +1149,72 @@ describe("Authentication", () => {
 		});
 	});
 
+	describe("discord link initiate", () => {
+		test("returns oauth_url when discord is configured", async () => {
+			ctx = createTestServer({
+				discordClientId: "test-client-id",
+				discordClientSecret: "test-client-secret",
+			});
+			const passwordHash = await hashPassword("pass123");
+			ctx.repository.createAuthUser({
+				id: crypto.randomUUID(),
+				username: "linkuser",
+				passwordHash,
+			});
+
+			const loginRes = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ username: "linkuser", password: "pass123" }),
+			});
+			const cookie = loginRes.headers.get("set-cookie")!;
+
+			const res = await fetch(`${ctx.baseUrl}/v1/auth/discord/link/initiate`, {
+				method: "POST",
+				headers: { Cookie: cookie },
+			});
+			expect(res.status).toBe(200);
+			const body = await res.json();
+			expect(body.oauth_url).toContain("discord.com/api/oauth2/authorize");
+			expect(body.oauth_url).toContain("client_id=test-client-id");
+		});
+
+		test("returns 400 when discord is not configured", async () => {
+			ctx = createTestServer();
+			const passwordHash = await hashPassword("pass123");
+			ctx.repository.createAuthUser({
+				id: crypto.randomUUID(),
+				username: "linkuser2",
+				passwordHash,
+			});
+
+			const loginRes = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ username: "linkuser2", password: "pass123" }),
+			});
+			const cookie = loginRes.headers.get("set-cookie")!;
+
+			const res = await fetch(`${ctx.baseUrl}/v1/auth/discord/link/initiate`, {
+				method: "POST",
+				headers: { Cookie: cookie },
+			});
+			expect(res.status).toBe(400);
+		});
+
+		test("requires authentication", async () => {
+			ctx = createTestServer({
+				discordClientId: "test-client-id",
+				discordClientSecret: "test-client-secret",
+			});
+
+			const res = await fetch(`${ctx.baseUrl}/v1/auth/discord/link/initiate`, {
+				method: "POST",
+			});
+			expect(res.status).toBe(401);
+		});
+	});
+
 	describe("auth me discord_links", () => {
 		test("includes discord_links for session auth", async () => {
 			ctx = createTestServer();

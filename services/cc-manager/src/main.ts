@@ -20,6 +20,7 @@ import {
 	handleDiscordCallback,
 	handleChangePassword,
 	handleDiscordUnlink,
+	handleDiscordLinkInitiate,
 	isAuthEnabled,
 	type AuthDeps,
 } from "./auth";
@@ -171,6 +172,9 @@ export function createServer(deps: ServerDeps): ServerHandle {
 			}
 			if (pathname === "/v1/auth/discord/link" && req.method === "DELETE") {
 				return handleDiscordUnlink(req, reqAuthDeps);
+			}
+			if (pathname === "/v1/auth/discord/link/initiate" && req.method === "POST") {
+				return handleDiscordLinkInitiate(req, reqAuthDeps);
 			}
 
 			if (pathname === "/v1/ws") {
