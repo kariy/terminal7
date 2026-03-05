@@ -1,4 +1,4 @@
-import { ChevronLeft, Settings } from "lucide-react";
+import { ChevronLeft, CircleUser, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { WsStatus } from "@/hooks/use-websocket";
 
@@ -19,6 +19,7 @@ interface HeaderProps {
   onBack: () => void;
   onDisconnect: () => void;
   onSettings?: () => void;
+  onUser?: () => void;
 }
 
 export function Header({
@@ -31,6 +32,7 @@ export function Header({
   onBack,
   onDisconnect,
   onSettings,
+  onUser,
 }: HeaderProps) {
   const statusText =
     status === "connected"
@@ -82,6 +84,17 @@ export function Header({
           )}
         </div>
       </div>
+      {onUser && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="shrink-0 rounded-full"
+          onClick={onUser}
+          title="Account"
+        >
+          <CircleUser className="h-4 w-4" />
+        </Button>
+      )}
       {onSettings && (
         <Button
           variant="ghost"

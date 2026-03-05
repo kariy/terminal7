@@ -17,6 +17,9 @@ import {
 	handleGoogleLogin,
 	handleDiscordLinkPage,
 	handleDiscordLink,
+	handleDiscordCallback,
+	handleChangePassword,
+	handleDiscordUnlink,
 	isAuthEnabled,
 	type AuthDeps,
 } from "./auth";
@@ -144,6 +147,9 @@ export function createServer(deps: ServerDeps): ServerHandle {
 			if (pathname === "/v1/auth/discord/link" && req.method === "GET") {
 				return handleDiscordLinkPage(req, reqAuthDeps);
 			}
+			if (pathname === "/v1/auth/discord/callback" && req.method === "GET") {
+				return handleDiscordCallback(req, reqAuthDeps);
+			}
 
 			// Auth gate: require valid auth for /v1/* routes
 			if (
@@ -159,6 +165,12 @@ export function createServer(deps: ServerDeps): ServerHandle {
 			}
 			if (pathname === "/v1/auth/discord/link" && req.method === "POST") {
 				return handleDiscordLink(req, reqAuthDeps);
+			}
+			if (pathname === "/v1/auth/password" && req.method === "PUT") {
+				return handleChangePassword(req, reqAuthDeps);
+			}
+			if (pathname === "/v1/auth/discord/link" && req.method === "DELETE") {
+				return handleDiscordUnlink(req, reqAuthDeps);
 			}
 
 			if (pathname === "/v1/ws") {

@@ -137,10 +137,44 @@ Includes a `Retry-After` header (seconds until the window resets).
 
 ```jsonc
 // Response 200 (session auth)
-{ "user": { "username": "admin" }, "auth_method": "session", "session": { "expires_at": 1706000000000 } }
+{
+  "user": { "username": "admin" },
+  "auth_method": "session",
+  "session": { "expires_at": 1706000000000 },
+  "discord_links": [
+    { "discord_user_id": "123456789", "created_at": 1706000000000 }
+  ]
+}
 
 // Response 200 (bearer token)
-{ "user": { "username": "token" }, "auth_method": "bearer_token" }
+{ "user": { "username": "token" }, "auth_method": "bearer_token", "discord_links": [] }
+```
+
+**`PUT /v1/auth/password`** — Change password for the authenticated user (requires auth, session auth only).
+
+```jsonc
+// Request
+{ "current_password": "oldpass", "new_password": "newpass" }
+
+// Response 200
+{ "ok": true }
+```
+
+**Response `401`** — Current password is incorrect:
+```json
+{ "error": { "code": "invalid_credentials", "message": "Current password is incorrect" } }
+```
+
+**Response `400`** — Missing or invalid parameters:
+```json
+{ "error": { "code": "invalid_params", "message": "current_password and new_password are required" } }
+```
+
+**`DELETE /v1/auth/discord/link`** — Unlink all Discord accounts from the authenticated user (requires auth).
+
+```jsonc
+// Response 200
+{ "ok": true }
 ```
 
 ### Discord Account Linking
@@ -157,8 +191,8 @@ Discord users can link their Discord account to a system user via a web-based fl
 
 **`GET /v1/auth/discord/link?code=...`** — Show link confirmation page. Exempt from auth gate (handles auth internally).
 
-- If user is authenticated: shows a confirmation page with Discord username and a "Confirm Link" button
-- If user is not authenticated: shows a login prompt with a link to the web UI
+- If user is not authenticated: redirects (`302`) to `/?discord_link={code}` so the user can log in or register first via the web UI
+- If user is authenticated: shows a confirmation page with a "Confirm Link" button. If Discord OAuth2 is configured (`CC_MANAGER_DISCORD_CLIENT_ID` + `CC_MANAGER_DISCORD_CLIENT_SECRET`), a "Verify with Discord" button is also shown to verify the user's Discord identity before linking.
 - Returns `404` if the code is invalid, `410` if expired
 
 **`POST /v1/auth/discord/link`** — Confirm the Discord account link. Requires auth (behind auth gate).
@@ -172,6 +206,21 @@ Discord users can link their Discord account to a system user via a web-based fl
 ```
 
 Also accepts `application/x-www-form-urlencoded` (from the HTML form), returning an HTML success page.
+
+**`GET /v1/auth/discord/callback`** — Discord OAuth2 callback. Exempt from auth gate (handles auth internally).
+
+This endpoint handles the OAuth2 redirect from Discord. The user must be logged in (via session cookie). It:
+1. Exchanges the authorization code for an access token
+2. Fetches the Discord user's identity
+3. Verifies the OAuth2 user matches the Discord user who initiated the link
+4. Links the Discord user ID to the logged-in user's account
+5. Shows a success page
+
+If the user is not logged in, returns a `401` HTML page directing them to log in first. Discord OAuth is used only for identity verification, not for account creation.
+
+Query parameters: `code` (Discord auth code), `state` (the link code from the bot).
+
+Requires `CC_MANAGER_DISCORD_CLIENT_ID` and `CC_MANAGER_DISCORD_CLIENT_SECRET` to be configured. The OAuth2 redirect URI must be set in your Discord application settings to `{baseUrl}/v1/auth/discord/callback`.
 
 **Response `400`** — Code expired:
 ```json
@@ -190,7 +239,7 @@ Also accepts `application/x-www-form-urlencoded` (from the HTML form), returning
 
 ### Exempt routes
 
-`/health`, `/v1/auth/login`, `/v1/auth/logout`, `/v1/auth/status`, `/v1/auth/register`, `/v1/auth/google`, `GET /v1/auth/discord/link`, and static file paths (anything not under `/v1/`) do not require authentication.
+`/health`, `/v1/auth/login`, `/v1/auth/logout`, `/v1/auth/status`, `/v1/auth/register`, `/v1/auth/google`, `GET /v1/auth/discord/link`, `GET /v1/auth/discord/callback`, and static file paths (anything not under `/v1/`) do not require authentication.
 
 ### Unauthorized response `401`
 
@@ -985,6 +1034,8 @@ All configuration is via environment variables prefixed `CC_MANAGER_`.
 | `CC_MANAGER_RATE_LIMIT_MAX_ATTEMPTS` | `10`                 | Max failed login attempts per IP within the window      |
 | `CC_MANAGER_TRUST_PROXY`          | `false`                 | Trust `X-Forwarded-For` header for client IP extraction |
 | `CC_MANAGER_BASE_URL`             | *(unset)*               | Externally-reachable URL (e.g. `https://cc.example.com`); used for Discord link URLs. Falls back to `http://{host}:{port}` |
+| `CC_MANAGER_DISCORD_CLIENT_ID`   | *(unset)*               | Discord OAuth2 application client ID; enables "Sign in with Discord" on the link page |
+| `CC_MANAGER_DISCORD_CLIENT_SECRET` | *(unset)*             | Discord OAuth2 application client secret |
 | `CC_MANAGER_HOST`                 | `127.0.0.1`             | Bind address                       |
 | `CC_MANAGER_PORT`                 | `8787`                  | Bind port                          |
 | `CC_MANAGER_DB_PATH`              | `~/.cc-manager/manager.db` | SQLite database path            |

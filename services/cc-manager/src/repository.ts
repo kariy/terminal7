@@ -1333,6 +1333,27 @@ export class ManagerRepository {
 		return result.changes > 0;
 	}
 
+	getDiscordUserLinksByAuthUserId(
+		authUserId: string,
+	): Array<{ discordUserId: string; createdAt: number }> {
+		const rows = this.db
+			.query(
+				"SELECT discord_user_id, created_at FROM discord_user_links WHERE auth_user_id = ?",
+			)
+			.all(authUserId) as Array<{ discord_user_id: string; created_at: number }>;
+		return rows.map((r) => ({
+			discordUserId: r.discord_user_id,
+			createdAt: r.created_at,
+		}));
+	}
+
+	deleteDiscordUserLinkByAuthUserId(authUserId: string): boolean {
+		const result = this.db
+			.query("DELETE FROM discord_user_links WHERE auth_user_id = ?")
+			.run(authUserId);
+		return result.changes > 0;
+	}
+
 	// ── Discord link codes ─────────────────────────────────────────
 
 	createDiscordLinkCode(params: {

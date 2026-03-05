@@ -88,10 +88,44 @@ export async function logout(): Promise<void> {
 export async function fetchAuthMe(): Promise<{
   user: { username: string };
   auth_method: string;
+  discord_links?: Array<{ discord_user_id: string; created_at: number }>;
 } | null> {
   const res = await fetch("/v1/auth/me", {
     headers: authHeaders(),
   });
   if (!res.ok) return null;
   return res.json();
+}
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  const res = await fetch("/v1/auth/password", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res
+      .json()
+      .catch(() => ({ error: { message: "Password change failed" } }));
+    throw new Error(body.error?.message ?? "Password change failed");
+  }
+}
+
+export async function unlinkDiscord(): Promise<void> {
+  const res = await fetch("/v1/auth/discord/link", {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const body = await res
+      .json()
+      .catch(() => ({ error: { message: "Unlink failed" } }));
+    throw new Error(body.error?.message ?? "Unlink failed");
+  }
 }

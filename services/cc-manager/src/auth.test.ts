@@ -754,7 +754,7 @@ describe("Authentication", () => {
 			expect(html).toContain("Confirm Link");
 		});
 
-		test("GET shows login prompt when not logged in", async () => {
+		test("GET redirects to login when not logged in", async () => {
 			const code = crypto.randomUUID();
 			dctx.repository.createDiscordLinkCode({
 				code,
@@ -765,11 +765,13 @@ describe("Authentication", () => {
 
 			const res = await fetch(
 				`${dctx.baseUrl}/v1/auth/discord/link?code=${code}`,
+				{ redirect: "manual" },
 			);
 
-			expect(res.status).toBe(401);
-			const html = await res.text();
-			expect(html).toContain("Log in");
+			expect(res.status).toBe(302);
+			const location = res.headers.get("location");
+			expect(location).toContain("/?discord_link=");
+			expect(location).toContain(code);
 		});
 
 		test("GET returns 404 for invalid code", async () => {
@@ -812,6 +814,381 @@ describe("Authentication", () => {
 			expect(cleaned).toBeGreaterThanOrEqual(1);
 			expect(dctx.repository.getDiscordLinkCode("expired-1")).toBeNull();
 			expect(dctx.repository.getDiscordLinkCode("valid-1")).not.toBeNull();
+		});
+
+		test("GET link page shows Verify with Discord button when configured and logged in", async () => {
+			// Need a separate server with discord OAuth config
+			const oauthCtx = createTestServer({
+				discordClientId: "test-client-id",
+				discordClientSecret: "test-secret",
+			});
+			try {
+				// Create user and log in
+				const pwHash = await hashPassword("testpass123");
+				oauthCtx.repository.createAuthUser({
+					id: crypto.randomUUID(),
+					username: "oauthtest",
+					passwordHash: pwHash,
+				});
+				const loginRes = await fetch(`${oauthCtx.baseUrl}/v1/auth/login`, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ username: "oauthtest", password: "testpass123" }),
+				});
+				const setCookie = loginRes.headers.get("set-cookie") ?? "";
+				const match = setCookie.match(/cc_session=([^;]+)/);
+				const cookie = match ? match[1] : "";
+
+				const code = crypto.randomUUID();
+				oauthCtx.repository.createDiscordLinkCode({
+					code,
+					discordUserId: "discord-oauth-1",
+					discordUsername: "oauthuser",
+					expiresAt: nowMs() + 600_000,
+				});
+
+				const res = await fetch(
+					`${oauthCtx.baseUrl}/v1/auth/discord/link?code=${code}`,
+					{ headers: { cookie: `cc_session=${cookie}` } },
+				);
+				expect(res.status).toBe(200);
+				const html = await res.text();
+				expect(html).toContain("Verify with Discord");
+				expect(html).toContain("discord.com/api/oauth2/authorize");
+				expect(html).toContain("test-client-id");
+				expect(html).toContain("Confirm Link");
+			} finally {
+				destroyTestServer(oauthCtx);
+			}
+		});
+
+		test("GET link page redirects when not logged in even with Discord OAuth configured", async () => {
+			const oauthCtx = createTestServer({
+				discordClientId: "test-client-id",
+				discordClientSecret: "test-secret",
+			});
+			try {
+				const code = crypto.randomUUID();
+				oauthCtx.repository.createDiscordLinkCode({
+					code,
+					discordUserId: "discord-oauth-2",
+					discordUsername: "nologinuser",
+					expiresAt: nowMs() + 600_000,
+				});
+
+				const res = await fetch(
+					`${oauthCtx.baseUrl}/v1/auth/discord/link?code=${code}`,
+					{ redirect: "manual" },
+				);
+				expect(res.status).toBe(302);
+				const location = res.headers.get("location");
+				expect(location).toContain("/?discord_link=");
+			} finally {
+				destroyTestServer(oauthCtx);
+			}
+		});
+
+		test("Discord OAuth callback rejects when not configured", async () => {
+			const res = await fetch(
+				`${dctx.baseUrl}/v1/auth/discord/callback?code=abc&state=xyz`,
+			);
+			expect(res.status).toBe(400);
+			const html = await res.text();
+			expect(html).toContain("not configured");
+		});
+
+		test("Discord OAuth callback rejects missing state/code", async () => {
+			const oauthCtx = createTestServer({
+				discordClientId: "test-client-id",
+				discordClientSecret: "test-secret",
+			});
+			try {
+				const res = await fetch(
+					`${oauthCtx.baseUrl}/v1/auth/discord/callback`,
+				);
+				expect(res.status).toBe(400);
+			} finally {
+				destroyTestServer(oauthCtx);
+			}
+		});
+
+		test("Discord OAuth callback rejects invalid link code in state", async () => {
+			const oauthCtx = createTestServer({
+				discordClientId: "test-client-id",
+				discordClientSecret: "test-secret",
+			});
+			try {
+				const res = await fetch(
+					`${oauthCtx.baseUrl}/v1/auth/discord/callback?code=abc&state=bogus-code`,
+				);
+				expect(res.status).toBe(404);
+				const html = await res.text();
+				expect(html).toContain("Invalid or expired");
+			} finally {
+				destroyTestServer(oauthCtx);
+			}
+		});
+
+		test("Discord OAuth callback rejects expired link code", async () => {
+			const oauthCtx = createTestServer({
+				discordClientId: "test-client-id",
+				discordClientSecret: "test-secret",
+			});
+			try {
+				const code = crypto.randomUUID();
+				oauthCtx.repository.createDiscordLinkCode({
+					code,
+					discordUserId: "discord-expired",
+					discordUsername: "expireduser",
+					expiresAt: nowMs() - 1000,
+				});
+				const res = await fetch(
+					`${oauthCtx.baseUrl}/v1/auth/discord/callback?code=abc&state=${code}`,
+				);
+				expect(res.status).toBe(410);
+			} finally {
+				destroyTestServer(oauthCtx);
+			}
+		});
+
+		test("Discord OAuth callback handles error param from Discord", async () => {
+			const oauthCtx = createTestServer({
+				discordClientId: "test-client-id",
+				discordClientSecret: "test-secret",
+			});
+			try {
+				const res = await fetch(
+					`${oauthCtx.baseUrl}/v1/auth/discord/callback?error=access_denied`,
+				);
+				expect(res.status).toBe(400);
+				const html = await res.text();
+				expect(html).toContain("access_denied");
+			} finally {
+				destroyTestServer(oauthCtx);
+			}
+		});
+
+		test("Discord OAuth callback is exempt from auth gate", async () => {
+			const oauthCtx = createTestServer({
+				authToken: "secret-token",
+				discordClientId: "test-client-id",
+				discordClientSecret: "test-secret",
+			});
+			try {
+				// Should not return 401 from the auth gate even though authToken is set
+				// The handler itself may return 401 for missing session, but that's different
+				const res = await fetch(
+					`${oauthCtx.baseUrl}/v1/auth/discord/callback?error=test`,
+				);
+				// Returns 400 (error from Discord), not 401 (auth gate)
+				expect(res.status).toBe(400);
+			} finally {
+				destroyTestServer(oauthCtx);
+			}
+		});
+	});
+
+	describe("change password", () => {
+		async function createCtxWithUser() {
+			const c = createTestServer();
+			const passwordHash = await hashPassword("testpass123");
+			c.repository.createAuthUser({
+				id: crypto.randomUUID(),
+				username: "testuser",
+				passwordHash,
+			});
+			return c;
+		}
+
+		async function loginAndGetCookie(ctx: TestContext) {
+			const loginRes = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ username: "testuser", password: "testpass123" }),
+			});
+			const setCookie = loginRes.headers.get("set-cookie")!;
+			return setCookie.split(";")[0];
+		}
+
+		test("changes password successfully", async () => {
+			ctx = await createCtxWithUser();
+			const cookie = await loginAndGetCookie(ctx);
+
+			const res = await fetch(`${ctx.baseUrl}/v1/auth/password`, {
+				method: "PUT",
+				headers: { "Content-Type": "application/json", Cookie: cookie },
+				body: JSON.stringify({
+					current_password: "testpass123",
+					new_password: "newpass456",
+				}),
+			});
+			expect(res.status).toBe(200);
+			const body = await res.json();
+			expect(body.ok).toBe(true);
+
+			// Old password should no longer work
+			const loginOld = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ username: "testuser", password: "testpass123" }),
+			});
+			expect(loginOld.status).toBe(401);
+
+			// New password should work
+			const loginNew = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ username: "testuser", password: "newpass456" }),
+			});
+			expect(loginNew.status).toBe(200);
+		});
+
+		test("rejects wrong current password", async () => {
+			ctx = await createCtxWithUser();
+			const cookie = await loginAndGetCookie(ctx);
+
+			const res = await fetch(`${ctx.baseUrl}/v1/auth/password`, {
+				method: "PUT",
+				headers: { "Content-Type": "application/json", Cookie: cookie },
+				body: JSON.stringify({
+					current_password: "wrongpass",
+					new_password: "newpass456",
+				}),
+			});
+			expect(res.status).toBe(401);
+			const body = await res.json();
+			expect(body.error.code).toBe("invalid_credentials");
+		});
+
+		test("requires authentication", async () => {
+			ctx = await createCtxWithUser();
+
+			const res = await fetch(`${ctx.baseUrl}/v1/auth/password`, {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					current_password: "testpass123",
+					new_password: "newpass456",
+				}),
+			});
+			expect(res.status).toBe(401);
+		});
+	});
+
+	describe("discord unlink", () => {
+		async function createCtxWithLinkedUser() {
+			const c = createTestServer();
+			const userId = crypto.randomUUID();
+			const passwordHash = await hashPassword("testpass123");
+			c.repository.createAuthUser({
+				id: userId,
+				username: "testuser",
+				passwordHash,
+			});
+			c.repository.createDiscordUserLink({
+				discordUserId: "discord-unlink-1",
+				authUserId: userId,
+			});
+			return c;
+		}
+
+		async function loginAndGetCookie(ctx: TestContext) {
+			const loginRes = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ username: "testuser", password: "testpass123" }),
+			});
+			const setCookie = loginRes.headers.get("set-cookie")!;
+			return setCookie.split(";")[0];
+		}
+
+		test("unlinks discord successfully", async () => {
+			ctx = await createCtxWithLinkedUser();
+			const cookie = await loginAndGetCookie(ctx);
+
+			const res = await fetch(`${ctx.baseUrl}/v1/auth/discord/link`, {
+				method: "DELETE",
+				headers: { Cookie: cookie },
+			});
+			expect(res.status).toBe(200);
+			const body = await res.json();
+			expect(body.ok).toBe(true);
+
+			// Verify via /v1/auth/me that discord_links is now empty
+			const meRes = await fetch(`${ctx.baseUrl}/v1/auth/me`, {
+				headers: { Cookie: cookie },
+			});
+			const me = await meRes.json();
+			expect(me.discord_links).toEqual([]);
+		});
+
+		test("succeeds even without existing link", async () => {
+			ctx = createTestServer();
+			const passwordHash = await hashPassword("testpass123");
+			ctx.repository.createAuthUser({
+				id: crypto.randomUUID(),
+				username: "testuser",
+				passwordHash,
+			});
+			const cookie = await loginAndGetCookie(ctx);
+
+			const res = await fetch(`${ctx.baseUrl}/v1/auth/discord/link`, {
+				method: "DELETE",
+				headers: { Cookie: cookie },
+			});
+			expect(res.status).toBe(200);
+		});
+
+		test("requires authentication", async () => {
+			ctx = await createCtxWithLinkedUser();
+
+			const res = await fetch(`${ctx.baseUrl}/v1/auth/discord/link`, {
+				method: "DELETE",
+			});
+			expect(res.status).toBe(401);
+		});
+	});
+
+	describe("auth me discord_links", () => {
+		test("includes discord_links for session auth", async () => {
+			ctx = createTestServer();
+			const userId = crypto.randomUUID();
+			const passwordHash = await hashPassword("testpass123");
+			ctx.repository.createAuthUser({
+				id: userId,
+				username: "testuser",
+				passwordHash,
+			});
+			ctx.repository.createDiscordUserLink({
+				discordUserId: "discord-me-1",
+				authUserId: userId,
+			});
+
+			const loginRes = await fetch(`${ctx.baseUrl}/v1/auth/login`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ username: "testuser", password: "testpass123" }),
+			});
+			const setCookie = loginRes.headers.get("set-cookie")!;
+			const cookie = setCookie.split(";")[0];
+
+			const res = await fetch(`${ctx.baseUrl}/v1/auth/me`, {
+				headers: { Cookie: cookie },
+			});
+			expect(res.status).toBe(200);
+			const body = await res.json();
+			expect(body.discord_links).toBeArrayOfSize(1);
+			expect(body.discord_links[0].discord_user_id).toBe("discord-me-1");
+		});
+
+		test("returns empty discord_links for bearer token auth", async () => {
+			ctx = createTestServer({ authToken: "test-token" });
+			const res = await fetch(`${ctx.baseUrl}/v1/auth/me`, {
+				headers: { Authorization: "Bearer test-token" },
+			});
+			expect(res.status).toBe(200);
+			const body = await res.json();
+			expect(body.discord_links).toEqual([]);
 		});
 	});
 

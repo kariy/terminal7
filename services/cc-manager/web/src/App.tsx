@@ -11,7 +11,8 @@ import type { SDKMessage } from "@/types/sdk-messages";
 import type { SessionListItem, HistoryMessage, SshConnectionItem } from "@/types/api";
 import { fetchSessions, fetchHistory, fetchSshConnections, createSshConnection, deleteSshConnection } from "@/lib/api";
 import { getSshDestination, setSshDestination, getSshPassword, setSshPassword } from "@/lib/settings";
-import { getAuthToken, fetchAuthMe } from "@/lib/auth";
+import { getAuthToken, fetchAuthMe, changePassword, unlinkDiscord, logout } from "@/lib/auth";
+import { UserView } from "@/components/views/UserView";
 import { Header, type HeaderTab } from "@/components/layout/Header";
 import { AuthDialog } from "@/components/AuthDialog";
 import { SshDestinationDialog } from "@/components/SshDestinationDialog";
@@ -32,7 +33,7 @@ import type {
 
 // ── State ──
 
-type View = "connecting" | "sessions" | "ssh" | "chat" | "terminal";
+type View = "connecting" | "sessions" | "ssh" | "chat" | "terminal" | "user";
 const SESSIONS_PAGE_SIZE = 25;
 
 interface AppState {
@@ -758,6 +759,11 @@ export default function App() {
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sessionsNextCursor, setSessionsNextCursor] = useState<string | null>(null);
   const [sessionsLoadingMore, setSessionsLoadingMore] = useState(false);
+  const [userInfo, setUserInfo] = useState<{
+    username: string;
+    authMethod: string;
+    discordLinks: Array<{ discord_user_id: string; created_at: number }>;
+  } | null>(null);
 
   const loadSessionsFirstPage = useCallback((refresh: boolean) => {
     if (stateRef.current.sessions.length === 0) {
@@ -1044,6 +1050,17 @@ export default function App() {
     }
   }, [status, showAuthPrompt]);
 
+  // If we arrived with a discord_link param and are now connected (authenticated),
+  // redirect to the link confirmation page
+  useEffect(() => {
+    if (status !== "connected") return;
+    const params = new URLSearchParams(window.location.search);
+    const discordLink = params.get("discord_link");
+    if (discordLink) {
+      window.location.href = `/v1/auth/discord/link?code=${encodeURIComponent(discordLink)}`;
+    }
+  }, [status]);
+
   useEffect(() => {
     fileSearchQueryRef.current = null;
     setFileSuggestions([]);
@@ -1326,11 +1343,52 @@ export default function App() {
 
   const handleAuthenticated = useCallback(() => {
     setShowAuthPrompt(false);
+
+    // If we arrived with a discord_link param, redirect to complete the linking flow
+    const params = new URLSearchParams(window.location.search);
+    const discordLink = params.get("discord_link");
+    if (discordLink) {
+      window.location.href = `/v1/auth/discord/link?code=${encodeURIComponent(discordLink)}`;
+      return;
+    }
+
     reconnect();
   }, [reconnect]);
 
   const handleOpenSettings = useCallback(() => {
     setShowSshDialog(true);
+  }, []);
+
+  const handleOpenUserPage = useCallback(() => {
+    fetchAuthMe().then((me) => {
+      if (me) {
+        setUserInfo({
+          username: me.user.username,
+          authMethod: me.auth_method,
+          discordLinks: me.discord_links ?? [],
+        });
+        dispatch({ type: "SET_VIEW", view: "user" });
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleChangePassword = useCallback(
+    async (currentPassword: string, newPassword: string) => {
+      await changePassword(currentPassword, newPassword);
+    },
+    [],
+  );
+
+  const handleUnlinkDiscord = useCallback(async () => {
+    await unlinkDiscord();
+    setUserInfo((prev) => prev ? { ...prev, discordLinks: [] } : prev);
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    logout().then(() => {
+      setShowAuthPrompt(true);
+      dispatch({ type: "SET_VIEW", view: "connecting" });
+    }).catch(() => {});
   }, []);
 
   const handleConnectSshConnection = useCallback(
@@ -1421,6 +1479,8 @@ export default function App() {
     } else {
       headerTitle = "New Session";
     }
+  } else if (state.view === "user") {
+    headerTitle = "Account";
   } else if (state.view === "terminal") {
     if (state.terminalOrigin === "ssh") {
       if (state.activeSshConnectionId) {
@@ -1446,13 +1506,14 @@ export default function App() {
       <Header
         title={headerTitle}
         status={status}
-        showBack={state.view === "chat" || state.view === "terminal"}
+        showBack={state.view === "chat" || state.view === "terminal" || state.view === "user"}
         totalCostUsd={headerCost}
         activeTab={(state.view === "sessions" || state.view === "ssh") ? state.view as HeaderTab : undefined}
         onTabChange={handleTabChange}
         onBack={state.view === "terminal" ? handleCloseTerminal : handleReturnToSessions}
         onDisconnect={handleDisconnect}
         onSettings={(state.view === "sessions" || state.view === "ssh") ? handleOpenSettings : undefined}
+        onUser={(state.view === "sessions" || state.view === "ssh") ? handleOpenUserPage : undefined}
       />
       {state.view === "connecting" && <ConnectingView />}
       {state.view === "sessions" && (
@@ -1498,6 +1559,16 @@ export default function App() {
           status={terminal.status}
           containerRef={terminal.containerRef}
           onClose={handleCloseTerminal}
+        />
+      )}
+      {state.view === "user" && userInfo && (
+        <UserView
+          username={userInfo.username}
+          authMethod={userInfo.authMethod}
+          discordLinks={userInfo.discordLinks}
+          onChangePassword={handleChangePassword}
+          onUnlinkDiscord={handleUnlinkDiscord}
+          onLogout={handleLogout}
         />
       )}
       {showAuthPrompt && (

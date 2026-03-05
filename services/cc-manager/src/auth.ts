@@ -555,6 +555,7 @@ export function handleAuthMe(
 				return jsonResponse(200, {
 					user: { username: "token" },
 					auth_method: "bearer_token",
+					discord_links: [],
 				});
 			}
 		}
@@ -565,15 +566,97 @@ export function handleAuthMe(
 	if (sessionId) {
 		const session = repository.getAuthSession(sessionId);
 		if (session && session.expiresAt > nowMs()) {
+			const discordLinks = repository.getDiscordUserLinksByAuthUserId(session.userId);
 			return jsonResponse(200, {
 				user: { username: session.username },
 				auth_method: "session",
 				session: { expires_at: session.expiresAt },
+				discord_links: discordLinks.map((l) => ({
+					discord_user_id: l.discordUserId,
+					created_at: l.createdAt,
+				})),
 			});
 		}
 	}
 
 	return unauthorizedResponse();
+}
+
+/**
+ * Handle PUT /v1/auth/password
+ */
+export async function handleChangePassword(
+	req: Request,
+	deps: AuthDeps,
+): Promise<Response> {
+	const user = getAuthenticatedUser(req, deps);
+	if (!user) {
+		return unauthorizedResponse();
+	}
+
+	let body: { current_password?: string; new_password?: string };
+	try {
+		body = await req.json();
+	} catch {
+		return jsonResponse(400, {
+			error: { code: "invalid_json", message: "Invalid JSON body" },
+		});
+	}
+
+	const currentPassword = body.current_password;
+	const newPassword = body.new_password;
+
+	if (!currentPassword || !newPassword) {
+		return jsonResponse(400, {
+			error: {
+				code: "invalid_params",
+				message: "current_password and new_password are required",
+			},
+		});
+	}
+
+	const valid = await verifyPassword(currentPassword, user.passwordHash);
+	if (!valid) {
+		return jsonResponse(401, {
+			error: {
+				code: "invalid_credentials",
+				message: "Current password is incorrect",
+			},
+		});
+	}
+
+	const pwCheck = validatePassword(newPassword);
+	if (!pwCheck.valid) {
+		return jsonResponse(400, {
+			error: {
+				code: "invalid_params",
+				message: pwCheck.message!,
+			},
+		});
+	}
+
+	const hash = await hashPassword(newPassword);
+	deps.repository.updateAuthUserPassword(user.id, hash);
+
+	log.auth(`password_changed username=${user.username}`);
+	return jsonResponse(200, { ok: true });
+}
+
+/**
+ * Handle DELETE /v1/auth/discord/link (unlink)
+ */
+export function handleDiscordUnlink(
+	req: Request,
+	deps: AuthDeps,
+): Response {
+	const user = getAuthenticatedUser(req, deps);
+	if (!user) {
+		return unauthorizedResponse();
+	}
+
+	deps.repository.deleteDiscordUserLinkByAuthUserId(user.id);
+	log.auth(`discord_unlink username=${user.username}`);
+	return jsonResponse(200, { ok: true });
 }
 
 /**
@@ -671,24 +754,34 @@ export function handleDiscordLinkPage(
 	}
 
 	const user = getAuthenticatedUser(req, deps);
+	const escaped = escapeHtml(linkCode.discordUsername);
+
+	// Not logged in: redirect to web UI login page, preserving the link code
 	if (!user) {
-		// Redirect to login with a return URL
-		const returnUrl = `/v1/auth/discord/link?code=${encodeURIComponent(code)}`;
-		return new Response(htmlPage("Login Required",
-			`<p>You need to log in to link your Discord account.</p>
-			<p><a href="/?discord_link=${encodeURIComponent(code)}">Log in and link account</a></p>`), {
-			status: 401,
-			headers: { "content-type": "text/html; charset=utf-8" },
+		const loginUrl = `/?discord_link=${encodeURIComponent(code)}`;
+		return new Response(null, {
+			status: 302,
+			headers: { location: loginUrl },
 		});
 	}
 
-	const escaped = escapeHtml(linkCode.discordUsername);
+	// Logged in: show confirm button + optional "Verify with Discord" OAuth button
+	let discordOAuthButton = "";
+	if (deps.config.discordClientId && deps.config.discordClientSecret) {
+		const baseUrl = deps.config.baseUrl ?? `http://${deps.config.host}:${deps.config.port}`;
+		const redirectUri = `${baseUrl}/v1/auth/discord/callback`;
+		const state = code; // pass the link code as OAuth2 state
+		const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${encodeURIComponent(deps.config.discordClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify&state=${encodeURIComponent(state)}`;
+		discordOAuthButton = `<p style="color:#666;margin-top:16px">— or —</p>
+		<p><a href="${escapeHtml(oauthUrl)}" style="display:inline-block;padding:10px 24px;font-size:16px;background:#5865F2;color:#fff;text-decoration:none;border-radius:4px;cursor:pointer;">Verify with Discord</a></p>`;
+	}
+
 	return new Response(htmlPage("Link Discord Account",
 		`<p>Link Discord account <strong>@${escaped}</strong> to your account <strong>${escapeHtml(user.username)}</strong>?</p>
 		<form method="POST" action="/v1/auth/discord/link">
 			<input type="hidden" name="code" value="${escapeHtml(code)}" />
 			<button type="submit" style="padding:8px 24px;font-size:16px;cursor:pointer;">Confirm Link</button>
-		</form>`), {
+		</form>${discordOAuthButton}`), {
 		status: 200,
 		headers: { "content-type": "text/html; charset=utf-8" },
 	});
@@ -774,6 +867,169 @@ export async function handleDiscordLink(
 	return jsonResponse(200, {
 		ok: true,
 		discord_username: linkCode.discordUsername,
+	});
+}
+
+/**
+ * Handle GET /v1/auth/discord/callback — Discord OAuth2 callback.
+ * Exchanges the authorization code for a token, gets user info,
+ * auto-creates an auth user if needed, links the Discord account, and logs them in.
+ */
+export async function handleDiscordCallback(
+	req: Request,
+	deps: AuthDeps,
+): Promise<Response> {
+	const { config, repository } = deps;
+
+	if (!config.discordClientId || !config.discordClientSecret) {
+		return new Response(htmlPage("Error", "<p>Discord OAuth is not configured.</p>"), {
+			status: 400,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	const url = new URL(req.url);
+	const authCode = url.searchParams.get("code");
+	const state = url.searchParams.get("state"); // this is our link code
+	const error = url.searchParams.get("error");
+
+	if (error) {
+		return new Response(htmlPage("Authorization Failed",
+			`<p>Discord authorization was denied or failed.</p><p><code>${escapeHtml(error)}</code></p>`), {
+			status: 400,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	if (!authCode || !state) {
+		return new Response(htmlPage("Error", "<p>Missing authorization code or state.</p>"), {
+			status: 400,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	// Validate the link code (state)
+	const linkCode = repository.getDiscordLinkCode(state);
+	if (!linkCode) {
+		return new Response(htmlPage("Link Failed", "<p>Invalid or expired link code.</p>"), {
+			status: 404,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+	if (linkCode.expiresAt < nowMs()) {
+		repository.deleteDiscordLinkCode(state);
+		return new Response(htmlPage("Link Expired", "<p>This link code has expired. Please run the command again in Discord.</p>"), {
+			status: 410,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	// Exchange authorization code for access token
+	const baseUrl = config.baseUrl ?? `http://${config.host}:${config.port}`;
+	const redirectUri = `${baseUrl}/v1/auth/discord/callback`;
+
+	let tokenData: { access_token?: string; token_type?: string };
+	try {
+		const tokenRes = await fetch("https://discord.com/api/oauth2/token", {
+			method: "POST",
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams({
+				client_id: config.discordClientId,
+				client_secret: config.discordClientSecret,
+				grant_type: "authorization_code",
+				code: authCode,
+				redirect_uri: redirectUri,
+			}),
+		});
+		if (!tokenRes.ok) {
+			log.auth(`discord_oauth token_exchange_failed status=${tokenRes.status}`);
+			return new Response(htmlPage("Error", "<p>Failed to exchange authorization code with Discord.</p>"), {
+				status: 502,
+				headers: { "content-type": "text/html; charset=utf-8" },
+			});
+		}
+		tokenData = await tokenRes.json();
+	} catch {
+		return new Response(htmlPage("Error", "<p>Failed to contact Discord.</p>"), {
+			status: 502,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	if (!tokenData.access_token) {
+		return new Response(htmlPage("Error", "<p>Discord did not return an access token.</p>"), {
+			status: 502,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	// Get Discord user info
+	let discordUser: { id?: string; username?: string; global_name?: string };
+	try {
+		const userRes = await fetch("https://discord.com/api/users/@me", {
+			headers: { authorization: `Bearer ${tokenData.access_token}` },
+		});
+		if (!userRes.ok) {
+			return new Response(htmlPage("Error", "<p>Failed to get Discord user info.</p>"), {
+				status: 502,
+				headers: { "content-type": "text/html; charset=utf-8" },
+			});
+		}
+		discordUser = await userRes.json();
+	} catch {
+		return new Response(htmlPage("Error", "<p>Failed to contact Discord.</p>"), {
+			status: 502,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	if (!discordUser.id || !discordUser.username) {
+		return new Response(htmlPage("Error", "<p>Discord returned incomplete user info.</p>"), {
+			status: 502,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	// Verify the OAuth2 user matches the Discord user who initiated the link
+	if (discordUser.id !== linkCode.discordUserId) {
+		return new Response(htmlPage("User Mismatch",
+			`<p>You signed in as a different Discord account than the one that requested the link.</p>
+			<p>Expected: <strong>@${escapeHtml(linkCode.discordUsername)}</strong></p>
+			<p>Got: <strong>@${escapeHtml(discordUser.username)}</strong></p>
+			<p>Please try again with the correct Discord account.</p>`), {
+			status: 403,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	// Require the user to be logged in — Discord OAuth is for identity verification, not registration
+	const user = getAuthenticatedUser(req, deps);
+	if (!user) {
+		const linkPageUrl = `/v1/auth/discord/link?code=${encodeURIComponent(state)}`;
+		return new Response(htmlPage("Login Required",
+			`<p>You need to log in before linking your Discord account.</p>
+			<p><a href="${escapeHtml(linkPageUrl)}">Go back to the link page</a></p>`), {
+			status: 401,
+			headers: { "content-type": "text/html; charset=utf-8" },
+		});
+	}
+
+	log.auth(`discord_oauth_verify discord_user=${discordUser.username} auth_user=${user.username}`);
+
+	// Create the Discord user link
+	repository.createDiscordUserLink({
+		discordUserId: discordUser.id,
+		authUserId: user.id,
+	});
+	repository.deleteDiscordLinkCode(state);
+
+	log.auth(`discord_oauth_link discord_user=${discordUser.username} auth_user=${user.username}`);
+
+	return new Response(htmlPage("Account Linked",
+		`<p>Discord account <strong>@${escapeHtml(discordUser.username)}</strong> has been linked successfully.</p>
+		<p>You can close this page and return to Discord.</p>`), {
+		status: 200,
+		headers: { "content-type": "text/html; charset=utf-8" },
 	});
 }
 
