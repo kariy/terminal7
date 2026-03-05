@@ -23,6 +23,7 @@ interface SessionMetadataRow {
 	last_activity_at: number;
 	source: "db" | "jsonl" | "merged";
 	total_cost_usd: number;
+	origin: string;
 	repo_id: string | null;
 	worktree_path: string | null;
 	branch: string | null;
@@ -374,6 +375,28 @@ export class ManagerRepository {
 					.run(nowMs());
 			})();
 		}
+
+		// V9: Add origin column to session_metadata
+		const hasV9 = this.db
+			.query("SELECT 1 FROM schema_migrations WHERE version = 9")
+			.get() as { "1": number } | null;
+		if (!hasV9) {
+			this.db.transaction(() => {
+				const cols = this.db
+					.query("PRAGMA table_info(session_metadata)")
+					.all() as { name: string }[];
+				if (!cols.some((c) => c.name === "origin")) {
+					this.db.exec(
+						"ALTER TABLE session_metadata ADD COLUMN origin TEXT NOT NULL DEFAULT 'app';",
+					);
+				}
+				this.db
+					.query(
+						"INSERT INTO schema_migrations (version, applied_at) VALUES (9, ?)",
+					)
+					.run(nowMs());
+			})();
+		}
 	}
 
 	private getMetadataRow(
@@ -419,6 +442,7 @@ export class ManagerRepository {
 		lastActivityAt?: number;
 		source: "db" | "jsonl";
 		costToAdd?: number;
+		origin?: string;
 		repoId?: string;
 		worktreePath?: string;
 		branch?: string;
@@ -445,6 +469,7 @@ export class ManagerRepository {
 		const createdAt = existing?.created_at ?? ts;
 		const totalCostUsd =
 			(existing?.total_cost_usd ?? 0) + (params.costToAdd ?? 0);
+		const origin = existing?.origin ?? params.origin ?? "app";
 		const repoId = params.repoId ?? existing?.repo_id ?? undefined;
 		const worktreePath = params.worktreePath ?? existing?.worktree_path ?? undefined;
 		const branch = params.branch ?? existing?.branch ?? undefined;
@@ -452,8 +477,8 @@ export class ManagerRepository {
 		this.db
 			.query(
 				`INSERT OR REPLACE INTO session_metadata (
-					session_id, encoded_cwd, cwd, title, created_at, updated_at, last_activity_at, source, total_cost_usd, repo_id, worktree_path, branch
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					session_id, encoded_cwd, cwd, title, created_at, updated_at, last_activity_at, source, total_cost_usd, origin, repo_id, worktree_path, branch
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			)
 			.run(
 				params.sessionId,
@@ -465,6 +490,7 @@ export class ManagerRepository {
 				activity,
 				source,
 				totalCostUsd,
+				origin,
 				repoId ?? null,
 				worktreePath ?? null,
 				branch ?? null,
@@ -480,6 +506,7 @@ export class ManagerRepository {
 			lastActivityAt: activity,
 			source,
 			totalCostUsd,
+			origin,
 			repoId,
 			worktreePath,
 			branch,
@@ -561,6 +588,7 @@ export class ManagerRepository {
 					sm.last_activity_at,
 					sm.source,
 					sm.total_cost_usd,
+					sm.origin,
 					sm.repo_id,
 					sm.worktree_path,
 					sm.branch,
@@ -592,6 +620,7 @@ export class ManagerRepository {
 			lastActivityAt: row.last_activity_at,
 			source: row.source,
 			totalCostUsd: row.total_cost_usd,
+			origin: row.origin,
 			repoId: row.repo_id ?? undefined,
 			worktreePath: row.worktree_path ?? undefined,
 			branch: row.branch ?? undefined,
@@ -611,6 +640,7 @@ export class ManagerRepository {
 					sm.last_activity_at,
 					sm.source,
 					sm.total_cost_usd,
+					sm.origin,
 					sm.repo_id,
 					sm.worktree_path,
 					sm.branch,
@@ -804,6 +834,7 @@ export class ManagerRepository {
 			lastActivityAt: row.last_activity_at,
 			source: row.source,
 			totalCostUsd: row.total_cost_usd,
+			origin: row.origin,
 			messageCount: row.message_count,
 			repoId: row.repo_id ?? undefined,
 			worktreePath: row.worktree_path ?? undefined,
@@ -847,20 +878,7 @@ export class ManagerRepository {
 		for (const group of groups) {
 			const rows = this.db
 				.query(
-					`SELECT
-						sm.session_id,
-						sm.encoded_cwd,
-						sm.cwd,
-						sm.title,
-						sm.created_at,
-						sm.updated_at,
-						sm.last_activity_at,
-						sm.source,
-						sm.total_cost_usd,
-						sm.repo_id,
-						sm.worktree_path,
-						sm.branch,
-						COALESCE(fi.message_count, 0) AS message_count
+					`SELECT sm.*, COALESCE(fi.message_count, 0) AS message_count
 					FROM session_metadata sm
 					LEFT JOIN session_file_index fi
 						ON fi.session_id = sm.session_id AND fi.encoded_cwd = sm.encoded_cwd
