@@ -755,8 +755,8 @@ export function handleDiscordLinkInitiate(
 		expiresAt: nowMs() + DISCORD_LINK_CODE_TTL_MS,
 	});
 
-	const origin = req.headers.get("origin") || config.baseUrl || `http://${config.host}:${config.port}`;
-	const redirectUri = `${origin}/v1/auth/discord/callback`;
+	const baseUrl = config.baseUrl ?? `http://${config.host}:${config.port}`;
+	const redirectUri = `${baseUrl}/v1/auth/discord/callback`;
 	const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${encodeURIComponent(config.discordClientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify&state=${encodeURIComponent(code)}`;
 
 	log.auth(`discord_link_initiate username=${user.username}`);
@@ -1080,13 +1080,16 @@ export async function handleDiscordCallback(
 
 	log.auth(`discord_oauth_link discord_user=${discordUser.username} auth_user=${user.username}`);
 
-	const returnMessage = isWebInitiated
-		? `<p><a href="/">Return to the app</a></p>`
-		: `<p>You can close this page and return to Discord.</p>`;
+	if (isWebInitiated) {
+		return new Response(null, {
+			status: 302,
+			headers: { Location: "/" },
+		});
+	}
 
 	return new Response(htmlPage("Account Linked",
 		`<p>Discord account <strong>@${escapeHtml(discordUser.username)}</strong> has been linked successfully.</p>
-		${returnMessage}`), {
+		<p>You can close this page and return to Discord.</p>`), {
 		status: 200,
 		headers: { "content-type": "text/html; charset=utf-8" },
 	});

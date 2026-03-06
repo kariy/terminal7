@@ -566,5 +566,9 @@ if (import.meta.main) {
 	if (!authEnabled) {
 		log.startup("authentication: disabled (no token or users configured)");
 	}
+	if (config.discordClientId) {
+		const baseUrl = config.baseUrl ?? `http://${config.host}:${handle.server.port}`;
+		log.startup(`discord oauth callback: ${baseUrl}/v1/auth/discord/callback`);
+	}
 
 }
