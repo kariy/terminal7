@@ -71,6 +71,7 @@ export class App {
 				source: session.source,
 				message_count: session.messageCount,
 				total_cost_usd: session.totalCostUsd,
+				origin: session.origin,
 				repo_id: session.repoId,
 				worktree_path: session.worktreePath,
 				branch: session.branch,

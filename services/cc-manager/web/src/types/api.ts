@@ -9,6 +9,7 @@ export interface SessionListItem {
   source: string;
   message_count: number;
   total_cost_usd: number;
+  origin: string;
   repo_id?: string;
   worktree_path?: string;
   branch?: string;

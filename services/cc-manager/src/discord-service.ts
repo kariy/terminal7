@@ -223,6 +223,7 @@ export class DiscordService {
 						cwd,
 						title: truncate(prompt.replace(/\s+/g, " "), 120),
 						source: "db",
+						origin: "discord",
 					});
 
 					if (!resumeSessionId && thread.guildId) {
@@ -292,6 +293,7 @@ export class DiscordService {
 					title: truncate(prompt.replace(/\s+/g, " "), 120),
 					source: "db",
 					costToAdd: totalCostUsd,
+					origin: "discord",
 				});
 			}
 		} catch (err) {

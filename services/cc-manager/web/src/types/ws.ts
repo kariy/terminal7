@@ -12,6 +12,7 @@ export interface WsSessionMeta {
   last_activity_at: number;
   source: string;
   total_cost_usd: number;
+  origin: string;
   repo_id?: string;
   worktree_path?: string;
   branch?: string;

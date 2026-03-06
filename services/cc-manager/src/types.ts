@@ -18,6 +18,7 @@ export interface SessionMetadata {
 	lastActivityAt: number;
 	source: "db" | "jsonl" | "merged";
 	totalCostUsd: number;
+	origin: string;
 	repoId?: string;
 	worktreePath?: string;
 	branch?: string;
@@ -115,6 +116,7 @@ export interface WsSessionMeta {
 	last_activity_at: number;
 	source: string;
 	total_cost_usd: number;
+	origin: string;
 	repo_id?: string;
 	worktree_path?: string;
 	branch?: string;
@@ -131,6 +133,7 @@ export function toWsSessionMeta(m: SessionMetadata): WsSessionMeta {
 		last_activity_at: m.lastActivityAt,
 		source: m.source,
 		total_cost_usd: m.totalCostUsd,
+		origin: m.origin,
 		repo_id: m.repoId,
 		worktree_path: m.worktreePath,
 		branch: m.branch,
@@ -255,6 +258,7 @@ export interface SessionListItem {
 	source: string;
 	message_count: number;
 	total_cost_usd: number;
+	origin: string;
 	repo_id?: string;
 	worktree_path?: string;
 	branch?: string;
