@@ -80,7 +80,7 @@ export async function logout(): Promise<void> {
 export async function fetchAuthMe(): Promise<{
   user: { username: string };
   auth_method: string;
-  discord_links?: Array<{ discord_user_id: string; created_at: number }>;
+  discord_links?: Array<{ discord_user_id: string; discord_username: string; created_at: number }>;
 } | null> {
   const res = await fetch("/v1/auth/me", {
     headers: authHeaders(),

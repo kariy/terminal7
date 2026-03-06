@@ -573,6 +573,7 @@ export function handleAuthMe(
 				session: { expires_at: session.expiresAt },
 				discord_links: discordLinks.map((l) => ({
 					discord_user_id: l.discordUserId,
+					discord_username: l.discordUsername,
 					created_at: l.createdAt,
 				})),
 			});
@@ -890,6 +891,7 @@ export async function handleDiscordLink(
 	deps.repository.createDiscordUserLink({
 		discordUserId: linkCode.discordUserId,
 		authUserId: user.id,
+		discordUsername: linkCode.discordUsername,
 	});
 	deps.repository.deleteDiscordLinkCode(code);
 
@@ -1072,6 +1074,7 @@ export async function handleDiscordCallback(
 	repository.createDiscordUserLink({
 		discordUserId: discordUser.id,
 		authUserId: user.id,
+		discordUsername: discordUser.username,
 	});
 	repository.deleteDiscordLinkCode(state);
 

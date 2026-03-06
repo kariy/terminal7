@@ -397,6 +397,24 @@ export class ManagerRepository {
 					.run(nowMs());
 			})();
 		}
+
+		// V10: Add discord_username to discord_user_links
+		if (
+			!this.db
+				.query("SELECT 1 FROM schema_migrations WHERE version = 10")
+				.get()
+		) {
+			(() => {
+				this.db.exec(
+					"ALTER TABLE discord_user_links ADD COLUMN discord_username TEXT NOT NULL DEFAULT ''",
+				);
+				this.db
+					.query(
+						"INSERT INTO schema_migrations (version, applied_at) VALUES (10, ?)",
+					)
+					.run(nowMs());
+			})();
+		}
 	}
 
 	private getMetadataRow(
@@ -1335,13 +1353,14 @@ export class ManagerRepository {
 	createDiscordUserLink(params: {
 		discordUserId: string;
 		authUserId: string;
+		discordUsername?: string;
 	}): void {
 		this.db
 			.query(
-				`INSERT OR REPLACE INTO discord_user_links (discord_user_id, auth_user_id, created_at)
-				 VALUES (?, ?, ?)`,
+				`INSERT OR REPLACE INTO discord_user_links (discord_user_id, auth_user_id, discord_username, created_at)
+				 VALUES (?, ?, ?, ?)`,
 			)
-			.run(params.discordUserId, params.authUserId, nowMs());
+			.run(params.discordUserId, params.authUserId, params.discordUsername ?? "", nowMs());
 	}
 
 	deleteDiscordUserLink(discordUserId: string): boolean {
@@ -1353,14 +1372,15 @@ export class ManagerRepository {
 
 	getDiscordUserLinksByAuthUserId(
 		authUserId: string,
-	): Array<{ discordUserId: string; createdAt: number }> {
+	): Array<{ discordUserId: string; discordUsername: string; createdAt: number }> {
 		const rows = this.db
 			.query(
-				"SELECT discord_user_id, created_at FROM discord_user_links WHERE auth_user_id = ?",
+				"SELECT discord_user_id, discord_username, created_at FROM discord_user_links WHERE auth_user_id = ?",
 			)
-			.all(authUserId) as Array<{ discord_user_id: string; created_at: number }>;
+			.all(authUserId) as Array<{ discord_user_id: string; discord_username: string; created_at: number }>;
 		return rows.map((r) => ({
 			discordUserId: r.discord_user_id,
+			discordUsername: r.discord_username,
 			createdAt: r.created_at,
 		}));
 	}
