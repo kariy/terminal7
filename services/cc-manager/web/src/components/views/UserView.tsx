@@ -93,10 +93,6 @@ export function UserView({
             <span className="text-muted-foreground">Username</span>
             <span className="font-medium">{username}</span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Auth method</span>
-            <span className="font-medium">{authMethod === "session" ? "Password" : "Bearer token"}</span>
-          </div>
         </CardContent>
       </Card>
 

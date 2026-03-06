@@ -377,25 +377,25 @@ export class ManagerRepository {
 		}
 
 		// V9: Add origin column to session_metadata
-		const hasV9 = this.db
-			.query("SELECT 1 FROM schema_migrations WHERE version = 9")
-			.get() as { "1": number } | null;
-		if (!hasV9) {
-			this.db.transaction(() => {
-				const cols = this.db
-					.query("PRAGMA table_info(session_metadata)")
-					.all() as { name: string }[];
-				if (!cols.some((c) => c.name === "origin")) {
-					this.db.exec(
-						"ALTER TABLE session_metadata ADD COLUMN origin TEXT NOT NULL DEFAULT 'app';",
-					);
-				}
+		{
+			const cols = this.db
+				.query("PRAGMA table_info(session_metadata)")
+				.all() as { name: string }[];
+			if (!cols.some((c) => c.name === "origin")) {
+				this.db.exec(
+					"ALTER TABLE session_metadata ADD COLUMN origin TEXT NOT NULL DEFAULT 'app';",
+				);
+			}
+			const hasV9 = this.db
+				.query("SELECT 1 FROM schema_migrations WHERE version = 9")
+				.get();
+			if (!hasV9) {
 				this.db
 					.query(
 						"INSERT INTO schema_migrations (version, applied_at) VALUES (9, ?)",
 					)
 					.run(nowMs());
-			})();
+			}
 		}
 
 		// V10: Add discord_username to discord_user_links
@@ -405,9 +405,14 @@ export class ManagerRepository {
 				.get()
 		) {
 			(() => {
-				this.db.exec(
-					"ALTER TABLE discord_user_links ADD COLUMN discord_username TEXT NOT NULL DEFAULT ''",
-				);
+				const cols = this.db
+					.query("PRAGMA table_info(discord_user_links)")
+					.all() as { name: string }[];
+				if (!cols.some((c) => c.name === "discord_username")) {
+					this.db.exec(
+						"ALTER TABLE discord_user_links ADD COLUMN discord_username TEXT NOT NULL DEFAULT ''",
+					);
+				}
 				this.db
 					.query(
 						"INSERT INTO schema_migrations (version, applied_at) VALUES (10, ?)",
